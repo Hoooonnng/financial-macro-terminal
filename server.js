@@ -276,6 +276,16 @@ const translationDictionary = [
     desc: "美國通膨核心數據，衡量消費者物價變動幅度，對降息/升息決策有極大影響力。" 
   },
   { 
+    key: "core inflation rate yoy", 
+    title: "核心通膨率 (年增率)", 
+    desc: "排除食品與能源後的消費者物價年度變動率，反映中長期且穩定的通膨趨勢。" 
+  },
+  { 
+    key: "core inflation rate mom", 
+    title: "核心通膨率 (月增率)", 
+    desc: "排除食品與能源後的消費者物價月度變動率，是衡量核心通膨強度的關鍵指標。" 
+  },
+  { 
     key: "inflation rate yoy", 
     title: "通膨率 (年增率)", 
     desc: "消費者物價指數的年度變動率，是衡量美國整體通膨水準的核心指標。" 
@@ -1004,6 +1014,56 @@ const MOCK_STOCK_PROFILES = {
   USAR: { name: "USA Compression Partners", price: 22.40, change: -0.15, pct: -0.67, earningsMonths: [2, 5, 8, 11] }
 };
 
+// 重要重磅數據指標家族分類，同一天同一時間只能保留一個核心指標，區分指標類型與核心/非核心以避免誤殺
+function getEventFamily(title) {
+  const t = (title || "").toLowerCase();
+  const isCore = t.includes("core") || t.includes("核心");
+  const suffix = isCore ? "-core" : "-headline";
+  
+  // PCE Family
+  if (t.includes("pce") || t.includes("個人消費支出")) {
+    if (t.includes("yoy") || t.includes("年增率")) return "pce-yoy" + suffix;
+    if (t.includes("mom") || t.includes("月增率")) return "pce-mom" + suffix;
+    return "pce-other" + suffix;
+  }
+  
+  // CPI Family
+  if (t.includes("cpi") || t.includes("消費者物價指數") || t.includes("inflation") || t.includes("通膨")) {
+    if (t.includes("yoy") || t.includes("年增率")) return "cpi-yoy" + suffix;
+    if (t.includes("mom") || t.includes("月增率")) return "cpi-mom" + suffix;
+    return "cpi-index" + suffix;
+  }
+  
+  // Unemployment Family
+  if (t.includes("unemployment") || t.includes("失業率")) {
+    return "unemployment";
+  }
+  
+  // Nonfarm Family
+  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農")) {
+    return "nonfarm";
+  }
+  
+  // GDP Family
+  if (t.includes("gdp") || t.includes("國內生產總值")) {
+    return "gdp";
+  }
+  
+  // PMI Family
+  if (t.includes("pmi") || t.includes("採購經理人指數")) {
+    if (t.includes("services") || t.includes("服務業")) return "pmi-services";
+    if (t.includes("manufacturing") || t.includes("製造業")) return "pmi-manufacturing";
+    return "pmi-other";
+  }
+  
+  // Retail Sales Family
+  if (t.includes("retail sales") || t.includes("零售銷售")) {
+    return "retail";
+  }
+  
+  return null;
+}
+
 function getFallbackProfile(ticker) {
   const upper = ticker.toUpperCase();
   if (MOCK_STOCK_PROFILES[upper]) {
@@ -1238,8 +1298,25 @@ app.get('/api/stocks', (req, res) => {
 // ==========================================
 
 function areTitlesDuplicate(t1, t2) {
-  const w1 = (t1 || "").replace(/[^a-zA-Z0-9\s]/g, "").trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const w2 = (t2 || "").replace(/[^a-zA-Z0-9\s]/g, "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const low1 = (t1 || "").toLowerCase();
+  const low2 = (t2 || "").toLowerCase();
+  
+  // YoY, MoM, QoQ are different metrics and must never be considered duplicates
+  const hasYoy1 = low1.includes("yoy") || low1.includes("y/y") || low1.includes("年增率");
+  const hasYoy2 = low2.includes("yoy") || low2.includes("y/y") || low2.includes("年增率");
+  if (hasYoy1 !== hasYoy2) return false;
+  
+  const hasMom1 = low1.includes("mom") || low1.includes("m/m") || low1.includes("月增率");
+  const hasMom2 = low2.includes("mom") || low2.includes("m/m") || low2.includes("月增率");
+  if (hasMom1 !== hasMom2) return false;
+  
+  // Core vs headline CPI are different metrics
+  const hasCore1 = low1.includes("core") || low1.includes("核心");
+  const hasCore2 = low2.includes("core") || low2.includes("核心");
+  if (hasCore1 !== hasCore2) return false;
+  
+  const w1 = low1.replace(/[^a-z0-9\s]/g, "").trim().split(/\s+/).filter(Boolean);
+  const w2 = low2.replace(/[^a-z0-9\s]/g, "").trim().split(/\s+/).filter(Boolean);
   if (w1.length === 0 || w2.length === 0) return false;
   const minWords = Math.min(w1.length, w2.length, 3);
   let matchCount = 0;
@@ -1263,19 +1340,6 @@ function getPrimaryScore(title) {
   return score;
 }
 
-// 重要重磅數據指標家族分類，同一天同一時間只能保留一個核心指標
-function getEventFamily(title) {
-  const t = (title || "").toLowerCase();
-  if (t.includes("cpi") || t.includes("消費者物價指數")) return "cpi";
-  if (t.includes("pce") || t.includes("個人消費支出")) return "pce";
-  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農")) return "nonfarm";
-  if (t.includes("unemployment") || t.includes("失業率")) return "unemployment";
-  if (t.includes("gdp") || t.includes("國內生產總值")) return "gdp";
-  if (t.includes("pmi") || t.includes("採購經理人指數")) return "pmi";
-  if (t.includes("retail sales") || t.includes("零售銷售")) return "retail";
-  return null;
-}
-
 // 智慧去重計分，優先保留數據完整、非s.a.調整的常規/重磅事件
 function getEventPriorityScore(item) {
   let score = 0;
@@ -1283,7 +1347,7 @@ function getEventPriorityScore(item) {
   
   if (t.includes("年增率") || t.includes("yoy")) score += 5;
   if (t.includes("月增率") || t.includes("mom")) score += 3;
-  if (t.includes("s.a") || t.includes("seasonally adjusted") || t.includes("調整")) score -= 15;
+  if (t.includes("s.a") || t.includes("seasonally adjusted") || t.includes("季調") || t.includes("調整")) score -= 15;
   
   // 資料完整度得分 (實際值、預測值、前值)
   if (item.actual && item.actual.toString().trim() !== "") score += 10;
@@ -1299,18 +1363,12 @@ function isDuplicateEvent(e1, e2) {
   
   const f1 = getEventFamily(e1.title);
   const f2 = getEventFamily(e2.title);
-  if (f1 && f2 && f1 === f2) {
-    return true; // 同一日同時間且屬同一重要指標家族，必為重複項
+  
+  if (f1 || f2) {
+    return f1 === f2; // If either has a family, they must belong to the exact same family metric to be duplicates
   }
   
-  // 智慧名稱相似度檢測 (例如 "CPI MoM" 與 "CPI MoM s.a.")
-  const t1 = (e1.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const t2 = (e2.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  
-  if (t1.includes(t2) || t2.includes(t1)) {
-    return true;
-  }
-  
+  if (e1.title === e2.title) return true;
   return areTitlesDuplicate(e1.title, e2.title);
 }
 
@@ -1384,17 +1442,55 @@ function processRawEvents(tvResult) {
     };
   });
 
-  // 4. 第二階段：智慧型去重與合併過濾器 (規則 A + 規則 B)
+  // 4. 第二階段：智慧型去重與合併過濾器 (帶白名單防誤殺保護，精準比對與保留)
   const finalResult = [];
   for (const item of transformed) {
+    const tLower = (item.title || "").toLowerCase().trim();
+    
+    // 白名單防禦線：如果事件名稱完全等於 "CPI" 或 "消費者物價指數"、"非農就業人口"、"聯準會利率決策"，不論如何都絕對不允許被 filter 剔除
+    const isWhitelisted = (
+      tLower === "cpi" ||
+      tLower === "消費者物價指數" ||
+      tLower === "消費者物價指數 (cpi)" ||
+      tLower === "非農就業人口" ||
+      tLower === "非農就業人口數據 (nfp)" ||
+      tLower === "聯準會利率決策" ||
+      tLower === "聯準會利率決策 (fomc)" ||
+      tLower.includes("非農就業人口") ||
+      tLower.includes("聯準會利率決策")
+    ) && !(tLower.includes("s.a") || tLower.includes("季調") || tLower.includes("調整") || tLower.includes("adjusted"));
+
     const dupIndex = finalResult.findIndex(fi => isDuplicateEvent(fi, item));
     
     if (dupIndex !== -1) {
       const existingItem = finalResult[dupIndex];
-      const scoreExisting = getEventPriorityScore(existingItem);
-      const scoreNew = getEventPriorityScore(item);
-      if (scoreNew > scoreExisting) {
+      
+      // 白名單優先級邏輯
+      const existingWhitelisted = (
+        (existingItem.title || "").toLowerCase().trim() === "cpi" ||
+        (existingItem.title || "").toLowerCase().trim() === "消費者物價指數" ||
+        (existingItem.title || "").toLowerCase().trim() === "消費者物價指數 (cpi)" ||
+        (existingItem.title || "").toLowerCase().trim() === "非農就業人口" ||
+        (existingItem.title || "").toLowerCase().trim() === "非農就業人口數據 (nfp)" ||
+        (existingItem.title || "").toLowerCase().trim() === "聯準會利率決策" ||
+        (existingItem.title || "").toLowerCase().trim() === "聯準會利率決策 (fomc)" ||
+        (existingItem.title || "").toLowerCase().includes("非農就業人口") ||
+        (existingItem.title || "").toLowerCase().includes("聯準會利率決策")
+      );
+      
+      if (isWhitelisted && !existingWhitelisted) {
+        // 新項目是主體白名單，直接覆蓋舊的非白名單重複項 (例如 CPI 覆蓋 CPI s.a)
         finalResult[dupIndex] = item;
+      } else if (!isWhitelisted && existingWhitelisted) {
+        // 舊項目是主體白名單，保留舊項目 (丟棄新項目，如 s.a 雜訊項)
+        // Do nothing (keeps existingItem)
+      } else {
+        // 否則，進行常規分數比較去重
+        const scoreExisting = getEventPriorityScore(existingItem);
+        const scoreNew = getEventPriorityScore(item);
+        if (scoreNew > scoreExisting) {
+          finalResult[dupIndex] = item;
+        }
       }
     } else {
       finalResult.push(item);
