@@ -6,9 +6,24 @@ class FinnhubStore {
   constructor() {
     this.apiKey = "d5ba1epr01qq0hq2kao0d5ba1epr01qq0hq2kaog"; // 預設 API 金鑰 (本機中轉用)
     
-    // 從 localStorage 讀取已訂閱的股票列表，若無則使用預設的 20 檔股票
-    const savedTickers = localStorage.getItem('watchlist_tickers');
-    this.tickers = savedTickers ? JSON.parse(savedTickers) : [...window.PRELOADED_TICKERS];
+    // 從 localStorage 讀取已訂閱的股票列表（多用戶完全隔離，儲存於用戶端瀏覽器中）
+    let saved = null;
+    try {
+      const stored = localStorage.getItem('watchlist_tickers');
+      if (stored) {
+        saved = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.warn("Failed to parse watchlist_tickers from localStorage", e);
+    }
+    
+    // 若本地儲存為空或不存在，則載入預設的初始股票，並同步寫入本地儲存
+    if (saved && Array.isArray(saved) && saved.length > 0) {
+      this.tickers = saved;
+    } else {
+      this.tickers = [...window.PRELOADED_TICKERS];
+      localStorage.setItem('watchlist_tickers', JSON.stringify(this.tickers));
+    }
     
     this.stocks = {}; // 存放股票行情資訊 { TSLA: { symbol, name, price, change, pct, status } }
     this.earnings = {}; // 存放財報日期 { TSLA: "YYYY-MM-DD" }

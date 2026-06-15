@@ -1164,7 +1164,9 @@ setInterval(() => {
   }
 }, 5000);
 
-// API Endpoint - 取得美股行情自選看板
+// API Endpoint - 取得美股行情自選看板 (多用戶隔離設計：後端不儲存個別用戶的自選股清單)
+// 用戶的自選清單完全儲存在瀏覽器的 localStorage 中，每次透過 Query Parameter 傳入，
+// 後端只作為行情數據之代理/模擬快取，不進行任何跨用戶之數據存儲或共享。
 app.get('/api/watchlist', (req, res) => {
   const tickersStr = req.query.tickers || "";
   const tickers = tickersStr.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
