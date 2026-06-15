@@ -297,7 +297,11 @@ class SidebarComponent {
             }
           }, 150);
         } else {
-          alert(`${ticker} 暫無公開的財報發布日期`);
+          if (state.isSimulating) {
+            alert("API 流量達到上限，請稍後刷新");
+          } else {
+            alert(`${ticker} 暫無公開的財報發布日期`);
+          }
         }
       });
 

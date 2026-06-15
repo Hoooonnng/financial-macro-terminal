@@ -127,6 +127,8 @@ class FinnhubStore {
           // 緩存財報日期到本地
           if (cached.earningsDate) {
             localStorage.setItem(`earnings_${ticker}`, cached.earningsDate);
+          } else {
+            localStorage.removeItem(`earnings_${ticker}`);
           }
 
           if (flashType) {
@@ -149,7 +151,7 @@ class FinnhubStore {
     if (this.pollingTimer) clearInterval(this.pollingTimer);
     this.pollingTimer = setInterval(() => {
       this.fetchWatchlistData();
-    }, 45000);
+    }, 60000); // 輪詢頻率拉長至 60 秒以減輕 Finnhub API 負載
   }
 
   async addStock(ticker) {

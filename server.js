@@ -1036,40 +1036,71 @@ function getFallbackProfile(ticker) {
   };
 }
 
-function getMockEarningsDate(ticker, year, month) {
-  const stock = MOCK_STOCK_PROFILES[ticker.toUpperCase()] || getFallbackProfile(ticker);
-  const months = stock.earningsMonths || [1, 4, 7, 10];
-  
-  if (!months.includes(month)) {
-    return null;
-  }
-  
-  let hash = 0;
-  const upperTicker = ticker.toUpperCase();
-  for (let i = 0; i < upperTicker.length; i++) {
-    hash += upperTicker.charCodeAt(i);
-  }
-  hash += year + month;
-  
-  const day = 5 + (hash % 21); // 5 ~ 25
-  const mm = String(month).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  
-  return `${year}-${mm}-${dd}`;
-}
+const earningsCache = {};
+const EARNINGS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds
 
-function getUpcomingEarningsDate(ticker) {
-  const stock = MOCK_STOCK_PROFILES[ticker.toUpperCase()] || getFallbackProfile(ticker);
-  const months = stock.earningsMonths || [1, 4, 7, 10];
-  if (months.length === 0) return null;
+async function getRealEarningsDate(ticker) {
+  const upperTicker = ticker.toUpperCase();
+  const cached = earningsCache[upperTicker];
   
-  let targetMonth = months.find(m => m >= 6);
-  let targetYear = 2026;
-  if (!targetMonth) {
-    targetMonth = months[0];
-    targetYear = 2027;
+  if (cached && (Date.now() - cached.timestamp < EARNINGS_CACHE_DURATION)) {
+    return cached.data;
   }
-  return getMockEarningsDate(ticker, targetYear, targetMonth);
+
+  // If rate limit is active, don't call
+  if (isSimulating) {
+    return cached ? cached.data : null; // fallback to old cached value or null
+  }
+
+  try {
+    const today = new Date();
+    // Use precise transaction range: from today - 15 days to today + 90 days
+    const fromDate = new Date(today.getTime() - 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const toDate = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const url = `https://finnhub.io/api/v1/calendar/earnings?from=${fromDate}&to=${toDate}&symbol=${upperTicker}&token=${finnhubToken}`;
+    const response = await axios.get(url, { timeout: 4000 });
+    const list = response.data.earningsCalendar || [];
+    
+    let earningsDate = null;
+    if (list.length > 0) {
+      // Sort to find the upcoming or closest future earnings date
+      // We look for dates >= today's date
+      const todayStr = today.toISOString().split('T')[0];
+      const futureEarnings = list
+        .filter(item => item.date >= todayStr)
+        .sort((a, b) => a.date.localeCompare(b.date));
+        
+      if (futureEarnings.length > 0) {
+        earningsDate = futureEarnings[0].date;
+      } else {
+        // If no future earnings, get the most recent past one
+        const pastEarnings = list
+          .filter(item => item.date < todayStr)
+          .sort((a, b) => b.date.localeCompare(a.date));
+        if (pastEarnings.length > 0) {
+          earningsDate = pastEarnings[0].date;
+        }
+      }
+    }
+
+    // Cache the result (even if it's null, so we don't spam the API)
+    earningsCache[upperTicker] = {
+      timestamp: Date.now(),
+      data: earningsDate
+    };
+
+    return earningsDate;
+  } catch (error) {
+    if (error.response && error.response.status === 429) {
+      isSimulating = true;
+      setTimeout(() => {
+        isSimulating = false;
+      }, 60000);
+    }
+    // Return old cached data if exists, otherwise null
+    return cached ? cached.data : null;
+  }
 }
 
 // 行情快取與訂閱列表
@@ -1084,7 +1115,7 @@ const activeTickers = new Set([
 let isSimulating = false;
 const finnhubToken = "d5ba1epr01qq0hq2kao0d5ba1epr01qq0hq2kaog";
 
-// 初始化快取
+// 初始化快取 (不產生任何虛假 mock 財報日期，初始值設為 null，等待背景輪詢異步填充)
 for (const ticker of activeTickers) {
   const prof = getFallbackProfile(ticker);
   watchlistCache[ticker] = {
@@ -1092,7 +1123,7 @@ for (const ticker of activeTickers) {
     price: prof.price,
     change: prof.change,
     pct: prof.pct,
-    earningsDate: getUpcomingEarningsDate(ticker)
+    earningsDate: null
   };
 }
 
@@ -1114,8 +1145,8 @@ function simulateStockTick(ticker) {
   cached.pct = totalPct;
 }
 
-// 背景輪詢定時器 (15秒輪詢所有訂閱股票行情)
-setInterval(async () => {
+// 背景輪詢定時任務 (抓取行情及真實財報)
+async function pollWatchlistData() {
   const tickersArray = Array.from(activeTickers);
   for (const ticker of tickersArray) {
     if (isSimulating) {
@@ -1128,12 +1159,15 @@ setInterval(async () => {
       const response = await axios.get(url, { timeout: 3000 });
       const data = response.data;
       
+      // 取得真實財報日期 (15分鐘快取保護)
+      const earningsDate = await getRealEarningsDate(ticker);
+      
       if (data && typeof data.c === 'number' && data.c > 0) {
         const cached = watchlistCache[ticker] || {};
         cached.price = data.c;
         cached.change = data.d || 0;
         cached.pct = data.dp || 0;
-        cached.earningsDate = getUpcomingEarningsDate(ticker);
+        cached.earningsDate = earningsDate;
         const baseProfile = getFallbackProfile(ticker);
         cached.name = baseProfile.name;
         watchlistCache[ticker] = cached;
@@ -1153,7 +1187,12 @@ setInterval(async () => {
       simulateStockTick(ticker);
     }
   }
-}, 45000);
+}
+
+// 立即執行一次，以在此端點被請求前，先異步抓取好真實行情與財報
+pollWatchlistData();
+// 背景輪詢定時器 (間隔拉長至 60 秒以減輕 Finnhub API 負載)
+setInterval(pollWatchlistData, 60000);
 
 // 額外的微幅隨機跳動，使 UI 更加靈動
 setInterval(() => {
@@ -1181,8 +1220,14 @@ app.get('/api/watchlist', (req, res) => {
         price: prof.price,
         change: prof.change,
         pct: prof.pct,
-        earningsDate: getUpcomingEarningsDate(ticker)
+        earningsDate: null
       };
+      // 對於新加入的股票，立即異步發起真實財報日期與行情獲取
+      getRealEarningsDate(ticker).then(date => {
+        if (watchlistCache[ticker]) {
+          watchlistCache[ticker].earningsDate = date;
+        }
+      });
     }
     responseData[ticker] = watchlistCache[ticker];
   }
@@ -1323,25 +1368,14 @@ function processRawEvents(tvResult) {
   return finalResult;
 }
 
-// API Endpoint - 取得總經事件數據
-app.get('/api/economic-calendar', async (req, res) => {
-  let { from, to, year, month } = req.query;
+const economicCalendarCache = {};
+const ECONOMIC_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
-  // 處理參數缺省：若未提供 from/to 則利用 year/month 計算
-  if (!from || !to) {
-    if (year && month) {
-      const y = parseInt(year);
-      const m = parseInt(month);
-      const lastDay = getDaysInMonth(y, m);
-      from = `${y}-${String(m).padStart(2, '0')}-01T00:00:00Z`;
-      to = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59Z`;
-    } else {
-      // 預設為目前時間開始的未來 30 天
-      const start = new Date();
-      const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
-      from = start.toISOString();
-      to = end.toISOString();
-    }
+async function fetchEconomicEvents(from, to) {
+  const cacheKey = `${from}_${to}`;
+  const cached = economicCalendarCache[cacheKey];
+  if (cached && (Date.now() - cached.timestamp < ECONOMIC_CACHE_DURATION)) {
+    return cached.data;
   }
 
   try {
@@ -1359,11 +1393,14 @@ app.get('/api/economic-calendar', async (req, res) => {
 
     const tvResult = response.data.result || [];
     const finalResult = processRawEvents(tvResult);
-    return res.json(finalResult);
-  } catch (error) {
-    // console.error(`[API Error] 無法取得 TradingView 即時數據: ${error.message}。自動切換至後端 Mock 數據生成。`);
     
-    // 降級處理：對範圍內的所有月份生成 Mock 數據
+    economicCalendarCache[cacheKey] = {
+      timestamp: Date.now(),
+      data: finalResult
+    };
+
+    return finalResult;
+  } catch (error) {
     const parsedEvents = [];
     try {
       const startDate = new Date(from);
@@ -1387,14 +1424,36 @@ app.get('/api/economic-calendar', async (req, res) => {
       
       const startStr = from.substring(0, 10);
       const endStr = to.substring(0, 10);
-      const filtered = parsedEvents.filter(e => e.date >= startStr && e.date <= endStr);
-      
-      return res.json(filtered);
+      return parsedEvents.filter(e => e.date >= startStr && e.date <= endStr);
     } catch (fallbackError) {
-      // console.error(`[Fallback Error] 後備 Mock 資料生成失敗: ${fallbackError.message}`);
-      return res.status(500).json({ error: "Failed to fetch data and fallback failed." });
+      return [];
     }
   }
+}
+
+// API Endpoint - 取得總經事件數據 (整合 15 分鐘記憶體快取)
+app.get('/api/economic-calendar', async (req, res) => {
+  let { from, to, year, month } = req.query;
+
+  // 處理參數缺省：若未提供 from/to 則利用 year/month 計算
+  if (!from || !to) {
+    if (year && month) {
+      const y = parseInt(year);
+      const m = parseInt(month);
+      const lastDay = getDaysInMonth(y, m);
+      from = `${y}-${String(m).padStart(2, '0')}-01T00:00:00Z`;
+      to = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59Z`;
+    } else {
+      // 預設為目前時間開始的未來 30 天
+      const start = new Date();
+      const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
+      from = start.toISOString();
+      to = end.toISOString();
+    }
+  }
+
+  const finalResult = await fetchEconomicEvents(from, to);
+  return res.json(finalResult);
 });
 
 // ==========================================
@@ -1499,28 +1558,7 @@ async function generateDailyReportText() {
   const fromStr = `${dateStr}T00:00:00Z`;
   const toStr = `${dateStr}T23:59:59Z`;
   
-  let events = [];
-  try {
-    const url = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(fromStr)}&to=${encodeURIComponent(toStr)}&countries=US`;
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.tradingview.com/',
-        'Origin': 'https://www.tradingview.com',
-        'Accept': 'application/json',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
-      },
-      timeout: 8000
-    });
-    const tvResult = response.data.result || [];
-    events = processRawEvents(tvResult);
-  } catch (err) {
-    const y = taipeiTime.getFullYear();
-    const m = taipeiTime.getMonth() + 1;
-    const d = taipeiTime.getDate();
-    const mockEvents = generateMockMacroEvents(y, m);
-    events = mockEvents.filter(e => e.date === `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-  }
+  const events = await fetchEconomicEvents(fromStr, toStr);
   
   const highImpactEvents = events.filter(e => e.importance === 3);
   
@@ -1582,20 +1620,7 @@ async function checkLiveEventActuals() {
     const fromStr = `${dateStr}T00:00:00Z`;
     const toStr = `${dateStr}T23:59:59Z`;
     
-    const url = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(fromStr)}&to=${encodeURIComponent(toStr)}&countries=US`;
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.tradingview.com/',
-        'Origin': 'https://www.tradingview.com',
-        'Accept': 'application/json',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
-      },
-      timeout: 8000
-    });
-    
-    const tvResult = response.data.result || [];
-    const processed = processRawEvents(tvResult);
+    const processed = await fetchEconomicEvents(fromStr, toStr);
     
     for (const event of processed) {
       if (event.importance === 3 && event.type === 'macro') {

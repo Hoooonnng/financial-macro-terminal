@@ -33,28 +33,10 @@ window.MOCK_STOCK_PROFILES = {
 };
 
 /**
- * 產生確定性的財報日期
+ * 產生確定性的財報日期 (配合閹割虛假數據規範：直接返回 null，不允許自行生成虛構財報)
  */
 window.getMockEarningsDate = function(ticker, year, month) {
-  const stock = window.MOCK_STOCK_PROFILES[ticker.toUpperCase()];
-  const months = stock ? stock.earningsMonths : [1, 4, 7, 10];
-  
-  if (!months.includes(month)) {
-    return null;
-  }
-  
-  let hash = 0;
-  const upperTicker = ticker.toUpperCase();
-  for (let i = 0; i < upperTicker.length; i++) {
-    hash += upperTicker.charCodeAt(i);
-  }
-  hash += year + month;
-  
-  const day = 5 + (hash % 21); // 5 ~ 25
-  const mm = String(month).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  
-  return `${year}-${mm}-${dd}`;
+  return null;
 };
 
 /**
