@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>財經要事與美股即時看板行事曆</title>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <!-- Local Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+  <!-- Lucide Icons CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/lucide/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <div id="app" class="app-root">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-logo">
+        <i data-lucide="trending-up" class="logo-icon animate-pulse"></i>
+        <h1>財經要事 & 美股即時行事曆</h1>
+      </div>
+      
+      <div class="header-controls">
+        <div class="time-displays">
+          <div class="time-item">
+            <span class="time-label">美東時間 (EST):</span>
+            <span id="est-time" class="time-value">--:--:--</span>
+          </div>
+          <div class="time-item">
+            <span class="time-label">本地時間:</span>
+            <span id="local-time" class="time-value">--:--:--</span>
+          </div>
+        </div>
+        
+        <div class="api-status-badge" id="api-status">
+          <span class="status-indicator"></span>
+          <span class="status-text">Finnhub API: 連線中...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Flex (Three Columns) -->
+    <main class="app-main">
+      <!-- Left Column: Upcoming Events (Timeline) -->
+      <aside class="left-panel">
+        <section class="sidebar-section upcoming-events-section card">
+          <div class="section-header">
+            <h2><i data-lucide="clock"></i> 即將發生的要事 (30天內)</h2>
+          </div>
+          <div class="timeline-container" id="upcoming-events-timeline">
+            <!-- Dynamically populated chronological timeline -->
+          </div>
+        </section>
+      </aside>
+
+      <!-- Center Column: Core Functions (Tabs & Calendars) -->
+      <section class="calendar-panel card">
+        <!-- Custom Calendar Panel -->
+        <div id="custom-calendar-panel">
+          <div class="calendar-header">
+            <div class="month-selector-wrapper">
+              <button class="nav-btn" id="prev-month-btn">
+                <i data-lucide="chevron-left"></i>
+              </button>
+              <div class="month-display">
+                <span id="calendar-year">2026</span> 年 <span id="calendar-month">06</span> 月
+              </div>
+              <button class="nav-btn" id="next-month-btn">
+                <i data-lucide="chevron-right"></i>
+              </button>
+            </div>
+
+            <div class="view-toggle">
+              <button class="toggle-btn active" id="view-grid-btn">
+                <i data-lucide="calendar"></i> 月曆檢視
+              </button>
+              <button class="toggle-btn" id="view-list-btn">
+                <i data-lucide="list"></i> 列表檢視
+              </button>
+            </div>
+          </div>
+
+          <!-- 1-12 Months Horizontal Scrollbar -->
+          <div class="months-bar-scroll">
+            <div class="months-bar" id="months-navigation-bar">
+              <!-- Dynamically generated buttons 1 to 12 -->
+            </div>
+          </div>
+
+          <!-- Main Grid Header (Weekdays) -->
+          <div class="calendar-grid-header" id="calendar-weekdays">
+            <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+          </div>
+
+          <!-- Calendar Dates Grid / List View Container -->
+          <div class="calendar-content-viewport">
+            <div class="calendar-grid" id="calendar-grid-body">
+              <!-- Dynamically populated dates -->
+            </div>
+            <div class="calendar-list-view hidden" id="calendar-list-body">
+              <!-- Dynamically populated event list -->
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Right Column: Watchlist -->
+      <aside class="right-panel">
+        <section class="sidebar-section watchlist-section card">
+          <div class="section-header">
+            <h2><i data-lucide="eye"></i> 美股即時行情看板</h2>
+            <div class="watchlist-count" id="watchlist-count-badge">0 檔</div>
+          </div>
+          
+          <!-- Add Stock Form -->
+          <div class="add-stock-container" id="add-stock-form-root">
+            <!-- Will be rendered by AddStock.js -->
+          </div>
+
+          <div class="watchlist-scrollbar">
+            <div class="watchlist-grid" id="watchlist-cards-container">
+              <!-- Dynamically populated stock ticker cards -->
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Selected Date Details Panel (Floating Modal) -->
+  <div class="modal-overlay hidden" id="date-details-panel" style="z-index: 9999;">
+    <div class="modal-container" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2><i data-lucide="calendar"></i> <span id="details-date-title">2026-06-15</span> 事件清單</h2>
+        <button class="modal-close-btn" id="close-details-btn">&times;</button>
+      </div>
+      <div class="modal-body" id="details-list-body" style="max-height: 60vh; overflow-y: auto; padding-right: 0.5rem; display: flex; flex-direction: column; gap: 0.75rem;">
+        <!-- Dynamically populated events for the selected date -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts loaded in dependency order to support direct file:// double-click opening -->
+  <script src="./src/utils/mockData.js"></script>
+  <script src="./src/utils/eventGenerator.js"></script>
+  <script src="./src/hooks/useFinnhub.js"></script>
+  <script src="./src/components/Calendar.js"></script>
+  <script src="./src/components/Sidebar.js"></script>
+  <script src="./src/components/AddStock.js"></script>
+  <script src="./src/app.js"></script>
+</body>
+</html>

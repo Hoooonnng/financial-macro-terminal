@@ -1,0 +1,104 @@
+/**
+ * mockData.js - 提供 20 檔指定美股的備用基本資訊與財報日期生成邏輯 (Global Version)
+ */
+
+window.PRELOADED_TICKERS = [
+  "TSLA", "TSLL", "SPCX", "OUST", "SOFI", 
+  "GRAB", "CRCL", "NVDA", "GOOG", "MSFT", 
+  "AAPL", "ONDS", "SNOW", "AMZN", "COHR", 
+  "AAOI", "LAC", "MP", "ORCL", "USAR"
+];
+
+window.MOCK_STOCK_PROFILES = {
+  TSLA: { name: "Tesla, Inc.", price: 406.43, change: 7.28, pct: 1.82, earningsMonths: [1, 4, 7, 10] },
+  TSLL: { name: "Direxion Daily TSLA 1.5x", price: 13.59, change: 0.47, pct: 3.58, earningsMonths: [3, 6, 9, 12] },
+  SPCX: { name: "Collaborative SPAC ETF", price: 16.00, change: -0.95, pct: -5.61, earningsMonths: [] }, 
+  OUST: { name: "Ouster, Inc.", price: 39.80, change: 0.19, pct: 0.48, earningsMonths: [2, 5, 8, 11] },
+  SOFI: { name: "SoFi Technologies", price: 16.58, change: -0.09, pct: -0.54, earningsMonths: [1, 4, 7, 10] },
+  GRAB: { name: "Grab Holdings Limited", price: 3.30, change: -0.05, pct: -1.49, earningsMonths: [2, 5, 8, 11] },
+  CRCL: { name: "Cercano Acquisition Corp", price: 77.84, change: -4.79, pct: -5.80, earningsMonths: [3, 6, 9, 12] },
+  NVDA: { name: "NVIDIA Corporation", price: 205.19, change: 0.32, pct: 0.16, earningsMonths: [2, 5, 8, 11] },
+  GOOG: { name: "Alphabet Inc.", price: 359.68, change: 1.91, pct: 0.53, earningsMonths: [1, 4, 7, 10] },
+  MSFT: { name: "Microsoft Corporation", price: 390.74, change: 0.40, pct: 0.10, earningsMonths: [1, 4, 7, 10] },
+  AAPL: { name: "Apple Inc.", price: 291.13, change: -4.50, pct: -1.52, earningsMonths: [1, 4, 7, 10] },
+  ONDS: { name: "Ondas Holdings Inc.", price: 9.33, change: -0.50, pct: -5.09, earningsMonths: [3, 6, 9, 12] },
+  SNOW: { name: "Snowflake Inc.", price: 232.78, change: -7.61, pct: -3.17, earningsMonths: [3, 6, 9, 12] },
+  AMZN: { name: "Amazon.com, Inc.", price: 238.55, change: -2.96, pct: -1.23, earningsMonths: [1, 4, 7, 10] },
+  COHR: { name: "Coherent Corp.", price: 385.03, change: 21.45, pct: 5.90, earningsMonths: [2, 5, 8, 11] },
+  AAOI: { name: "Applied Optoelectronics", price: 169.05, change: -3.73, pct: -2.16, earningsMonths: [2, 5, 8, 11] },
+  LAC: { name: "Lithium Americas Corp.", price: 4.55, change: 0.14, pct: 3.17, earningsMonths: [2, 5, 8, 11] },
+  MP: { name: "MP Materials Corp.", price: 18.50, change: 0.35, pct: 1.93, earningsMonths: [2, 5, 8, 11] },
+  ORCL: { name: "Oracle Corporation", price: 140.20, change: 1.22, pct: 0.88, earningsMonths: [3, 6, 9, 12] },
+  USAR: { name: "USA Compression Partners", price: 22.40, change: -0.15, pct: -0.67, earningsMonths: [2, 5, 8, 11] }
+};
+
+/**
+ * 產生確定性的財報日期
+ */
+window.getMockEarningsDate = function(ticker, year, month) {
+  const stock = window.MOCK_STOCK_PROFILES[ticker.toUpperCase()];
+  const months = stock ? stock.earningsMonths : [1, 4, 7, 10];
+  
+  if (!months.includes(month)) {
+    return null;
+  }
+  
+  let hash = 0;
+  const upperTicker = ticker.toUpperCase();
+  for (let i = 0; i < upperTicker.length; i++) {
+    hash += upperTicker.charCodeAt(i);
+  }
+  hash += year + month;
+  
+  const day = 5 + (hash % 21); // 5 ~ 25
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  
+  return `${year}-${mm}-${dd}`;
+};
+
+/**
+ * 取得股票的基本名稱與股價
+ */
+window.getFallbackProfile = function(ticker) {
+  const upper = ticker.toUpperCase();
+  if (window.MOCK_STOCK_PROFILES[upper]) {
+    return { ...window.MOCK_STOCK_PROFILES[upper], symbol: upper };
+  }
+  
+  let hash = 0;
+  for (let i = 0; i < upper.length; i++) {
+    hash += upper.charCodeAt(i);
+  }
+  
+  const mockPrice = 10 + (hash % 490);
+  const mockChange = ((hash % 100) / 10) - 5;
+  const mockPct = parseFloat((mockChange / mockPrice * 100).toFixed(2));
+  
+  const monthsGroup = [
+    [1, 4, 7, 10],
+    [2, 5, 8, 11],
+    [3, 6, 9, 12]
+  ];
+  const earningsMonths = monthsGroup[hash % 3];
+
+  return {
+    symbol: upper,
+    name: `${upper} International Inc.`,
+    price: parseFloat(mockPrice.toFixed(2)),
+    change: parseFloat(mockChange.toFixed(2)),
+    pct: mockPct,
+    earningsMonths
+  };
+};
+
+window.getEventWeight = function(event) {
+  if (!event) return 0;
+  if (event.type === 'earnings') return 4;
+  if (event.type === 'macro') {
+    if (event.importance === 3) return 3;
+    if (event.importance === 2) return 2;
+    return 1;
+  }
+  return 0;
+};
