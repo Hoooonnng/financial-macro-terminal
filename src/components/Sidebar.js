@@ -340,13 +340,13 @@ class SidebarComponent {
       if (stock.technicalLevels) {
         const techDiv = document.createElement('div');
         techDiv.className = 'stock-tech-levels';
+        
+        const techGroup = document.createElement('div');
+        techGroup.className = 'tech-group';
         let hasVisibleLevels = false;
 
         // SMC 系統圖層
         if (this.showSMC) {
-          const smcGroup = document.createElement('div');
-          smcGroup.className = 'tech-group smc-group';
-
           // 公允價值跳空 (FVG)
           if (stock.technicalLevels.fvgs) {
             stock.technicalLevels.fvgs.forEach(fvg => {
@@ -355,7 +355,7 @@ class SidebarComponent {
                 const fvgEl = document.createElement('span');
                 fvgEl.className = `tech-level fvg ${fvg.type} ${fvg.mitigated ? 'mitigated' : ''}`;
                 fvgEl.innerHTML = `🛡️ FVG (${fvg.type === 'bullish' ? '多' : '空'})${fvg.mitigated ? ' [已緩解]' : ''}: $${fvg.bottom.toFixed(2)}-$${fvg.top.toFixed(2)}`;
-                smcGroup.appendChild(fvgEl);
+                techGroup.appendChild(fvgEl);
               }
             });
           }
@@ -368,28 +368,21 @@ class SidebarComponent {
                 const obEl = document.createElement('span');
                 obEl.className = `tech-level ob ${ob.type}`;
                 obEl.innerHTML = `📦 OB (${ob.type === 'bullish' ? '支' : '壓'}): $${ob.bottom.toFixed(2)}-$${ob.top.toFixed(2)}`;
-                smcGroup.appendChild(obEl);
+                techGroup.appendChild(obEl);
               }
             });
-          }
-
-          if (smcGroup.children.length > 0) {
-            techDiv.appendChild(smcGroup);
           }
         }
 
         // 經典系統圖層
         if (this.showClassic) {
-          const classicGroup = document.createElement('div');
-          classicGroup.className = 'tech-group classic-group';
-
           // PDH (昨日最高點)
           if (isWithinProximity(stock.technicalLevels.pdh, stock.price)) {
             hasVisibleLevels = true;
             const pdhEl = document.createElement('span');
             pdhEl.className = 'tech-level pdh';
             pdhEl.textContent = `📈 PDH: $${stock.technicalLevels.pdh.toFixed(2)}`;
-            classicGroup.appendChild(pdhEl);
+            techGroup.appendChild(pdhEl);
           }
 
           // Open (當日開盤價)
@@ -398,7 +391,7 @@ class SidebarComponent {
             const openEl = document.createElement('span');
             openEl.className = 'tech-level open';
             openEl.textContent = `🔔 開盤: $${stock.technicalLevels.open.toFixed(2)}`;
-            classicGroup.appendChild(openEl);
+            techGroup.appendChild(openEl);
           }
 
           // PDL (昨日最低點)
@@ -407,15 +400,12 @@ class SidebarComponent {
             const pdlEl = document.createElement('span');
             pdlEl.className = 'tech-level pdl';
             pdlEl.textContent = `📉 PDL: $${stock.technicalLevels.pdl.toFixed(2)}`;
-            classicGroup.appendChild(pdlEl);
-          }
-
-          if (classicGroup.children.length > 0) {
-            techDiv.appendChild(classicGroup);
+            techGroup.appendChild(pdlEl);
           }
         }
 
         if (hasVisibleLevels) {
+          techDiv.appendChild(techGroup);
           card.appendChild(techDiv);
         }
       }
