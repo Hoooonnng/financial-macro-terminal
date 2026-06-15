@@ -5,6 +5,30 @@
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
+
+// 手動載入 .env 檔案配置 (零相依性，相容所有環境)
+try {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const envData = fs.readFileSync(envPath, 'utf8');
+    envData.split(/\r?\n/).forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const index = trimmed.indexOf('=');
+        if (index > 0) {
+          const key = trimmed.substring(0, index).trim();
+          const val = trimmed.substring(index + 1).trim();
+          if (key && !process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    });
+  }
+} catch (err) {
+  // 靜默容錯
+}
 
 const app = express();
 const PORT = 3000;
@@ -1907,6 +1931,20 @@ app.post('/webhook', lineWebhookMiddleware, (req, res) => {
 
 
 async function handleLineEvent(event) {
+  // 監聽新加好友 (follow 事件)
+  if (event.type === 'follow') {
+    try {
+      const userId = event.source.userId;
+      if (userId) {
+        const profile = await lineClient.getProfile(userId);
+        console.log(`🟢 [新好友報到] 暱稱: ${profile.displayName}`);
+      }
+    } catch (err) {
+      console.error("處理新加好友事件錯誤:", err.message);
+    }
+    return Promise.resolve(null);
+  }
+
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
   }
@@ -2089,6 +2127,35 @@ async function sendLiveDataFlash(event) {
 // 啟動即時發布檢測
 setInterval(checkLiveEventActuals, 30000);
 
+async function performHistoryFollowersLookup() {
+  if (!lineClient) return;
+  try {
+    const followerIdsResult = await lineClient.getBotFollowersIds();
+    const userIds = followerIdsResult.userIds || followerIdsResult.ids || [];
+    
+    if (userIds.length === 0) {
+      console.log("🔍 [歷史好友名單盤點] 無現存好友 ID。");
+      return;
+    }
+    
+    const profiles = [];
+    for (const userId of userIds) {
+      try {
+        const profile = await lineClient.getProfile(userId);
+        profiles.push(profile.displayName);
+      } catch (err) {
+        profiles.push(`未知用戶 (${userId.slice(0, 8)}...)`);
+      }
+    }
+    
+    const namesList = profiles.map((name, idx) => `${idx + 1}. 暱稱: ${name}`).join(' | ');
+    console.log(`🔍 [歷史好友名單盤點] ${namesList}`);
+  } catch (err) {
+    console.error("🔍 [歷史好友名單盤點] 發生錯誤:", err.message);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`伺服器正在運行: http://localhost:${PORT}`);
+  performHistoryFollowersLookup();
 });
