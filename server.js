@@ -17,22 +17,22 @@ function getCompareType(title, indicator) {
   const t = (title || "").toLowerCase();
   const ind = (indicator || "").toLowerCase();
   
-  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("employment change") || ind.includes("non farm") || ind.includes("nfp")) {
+  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("employment change") || t.includes("非農") || ind.includes("non farm") || ind.includes("nfp")) {
     return "higher-better";
   }
-  if (t.includes("cpi") || t.includes("consumer price") || ind.includes("cpi") || ind.includes("inflation rate")) {
+  if (t.includes("cpi") || t.includes("consumer price") || t.includes("消費者物價") || t.includes("通膨") || ind.includes("cpi") || ind.includes("inflation rate")) {
     return "lower-better";
   }
-  if (t.includes("ppi") || t.includes("producer price") || ind.includes("ppi")) {
+  if (t.includes("ppi") || t.includes("producer price") || t.includes("生產者物價") || ind.includes("ppi")) {
     return "lower-better";
   }
-  if (t.includes("retail sales") || ind.includes("retail sales")) {
+  if (t.includes("retail sales") || t.includes("零售銷售") || ind.includes("retail sales")) {
     return "higher-better";
   }
   if (t.includes("interest rate") || t.includes("fed") || t.includes("fomc") || ind.includes("interest rate") || ind.includes("fomc")) {
     return "equal-neutral";
   }
-  if (t.includes("jobless claims") || t.includes("initial claims") || ind.includes("claims")) {
+  if (t.includes("jobless claims") || t.includes("initial claims") || t.includes("失業金") || t.includes("初請") || ind.includes("claims")) {
     return "lower-better";
   }
   return "equal-neutral";
@@ -1767,28 +1767,48 @@ async function sendLiveDataFlash(event) {
     const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
     if (!targetId) return;
     
-    let impactText = "📊 數據公佈分析中...";
+    let deviationText = "";
+    let tag = "[無預期數據 ⚪]";
+    const t = (event.title || "").toLowerCase();
+    
     if (event.consensus && event.actual) {
       const actVal = parseFloat(event.actual.replace(/[^0-9.-]/g, ''));
       const consVal = parseFloat(event.consensus.replace(/[^0-9.-]/g, ''));
       if (!isNaN(actVal) && !isNaN(consVal)) {
-        if (event.compareType === 'higher-better') {
-          impactText = actVal > consVal ? "🟢 數據優於預期 (利多)" : (actVal < consVal ? "🔴 數據遜於預期 (利空)" : "⚪ 數據符合預期 (中性)");
-        } else if (event.compareType === 'lower-better') {
-          impactText = actVal < consVal ? "🟢 數據優於預期 (通膨降溫 / 利多)" : (actVal > consVal ? "🔴 數據遜於預期 (通膨升溫 / 利空)" : "⚪ 數據符合預期 (中性)");
+        const diff = parseFloat((actVal - consVal).toFixed(2));
+        const unitMatch = event.actual.match(/[%KMB]$/);
+        const unit = unitMatch ? unitMatch[0] : "";
+        const sign = diff > 0 ? "+" : "";
+        deviationText = ` (偏差: ${sign}${diff}${unit})`;
+        
+        const isInflation = t.includes("cpi") || t.includes("pce") || t.includes("消費者物價指數") || t.includes("個人消費支出") || t.includes("inflation") || t.includes("通膨");
+        const isEconomy = t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農") || t.includes("gdp") || t.includes("國內生產總值") || t.includes("retail sales") || t.includes("零售銷售");
+        
+        if (Math.abs(diff) < 0.001) {
+          tag = "[符合預期 ⚪]";
+        } else if (isInflation) {
+          tag = diff < 0 ? "[利多 / 美元轉弱 🟢]" : "[利空 / 美元飆升 🔴]";
+        } else if (isEconomy) {
+          tag = diff > 0 ? "[利多 🟢]" : "[利空 🔴]";
+        } else {
+          if (event.compareType === 'higher-better') {
+            tag = diff > 0 ? "[利多 🟢]" : "[利空 🔴]";
+          } else if (event.compareType === 'lower-better') {
+            tag = diff < 0 ? "[利多 🟢]" : "[利空 🔴]";
+          } else {
+            tag = "[中性 ⚪]";
+          }
         }
       }
     }
     
-    let text = `⚡ 財經即時快訊 ⚡\n`;
-    text += `----------------------------\n`;
-    text += `📢 指標：${event.title}\n`;
-    text += `⏱️ 時間：${event.time}\n`;
-    text += `📌 最新實際值：${event.actual}\n`;
-    text += `📊 市場預測值：${event.consensus || '無'}\n`;
-    text += `📉 歷史前值：${event.previous || '無'}\n`;
-    text += `----------------------------\n`;
-    text += `💡 影響：${impactText}`;
+    let text = `===================\n`;
+    text += `🔥 [重磅數據捷報] ${event.title}\n`;
+    text += `判斷：${tag}\n`;
+    text += `實際值：${event.actual}${deviationText}\n`;
+    text += `預測值：${event.consensus || '無'}\n`;
+    text += `前值：${event.previous || '無'}\n`;
+    text += `===================`;
     
     await lineClient.pushMessage(targetId, {
       type: 'text',
