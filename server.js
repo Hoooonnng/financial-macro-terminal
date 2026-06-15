@@ -1263,12 +1263,55 @@ function getPrimaryScore(title) {
   return score;
 }
 
-function getFieldScore(item) {
+// 重要重磅數據指標家族分類，同一天同一時間只能保留一個核心指標
+function getEventFamily(title) {
+  const t = (title || "").toLowerCase();
+  if (t.includes("cpi") || t.includes("消費者物價指數")) return "cpi";
+  if (t.includes("pce") || t.includes("個人消費支出")) return "pce";
+  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農")) return "nonfarm";
+  if (t.includes("unemployment") || t.includes("失業率")) return "unemployment";
+  if (t.includes("gdp") || t.includes("國內生產總值")) return "gdp";
+  if (t.includes("pmi") || t.includes("採購經理人指數")) return "pmi";
+  if (t.includes("retail sales") || t.includes("零售銷售")) return "retail";
+  return null;
+}
+
+// 智慧去重計分，優先保留數據完整、非s.a.調整的常規/重磅事件
+function getEventPriorityScore(item) {
   let score = 0;
-  if (item.actual && item.actual.trim() !== "") score += 10;
-  if (item.consensus && item.consensus.trim() !== "") score += 5;
-  if (item.previous && item.previous.trim() !== "") score += 2;
+  const t = (item.title || "").toLowerCase();
+  
+  if (t.includes("年增率") || t.includes("yoy")) score += 5;
+  if (t.includes("月增率") || t.includes("mom")) score += 3;
+  if (t.includes("s.a") || t.includes("seasonally adjusted") || t.includes("調整")) score -= 15;
+  
+  // 資料完整度得分 (實際值、預測值、前值)
+  if (item.actual && item.actual.toString().trim() !== "") score += 10;
+  if (item.consensus && item.consensus.toString().trim() !== "") score += 5;
+  if (item.previous && item.previous.toString().trim() !== "") score += 2;
+  
   return score;
+}
+
+// 判斷兩個事件是否為高度相似的同時間重複事件
+function isDuplicateEvent(e1, e2) {
+  if (e1.date !== e2.date || e1.time !== e2.time) return false;
+  
+  const f1 = getEventFamily(e1.title);
+  const f2 = getEventFamily(e2.title);
+  if (f1 && f2 && f1 === f2) {
+    return true; // 同一日同時間且屬同一重要指標家族，必為重複項
+  }
+  
+  // 智慧名稱相似度檢測 (例如 "CPI MoM" 與 "CPI MoM s.a.")
+  const t1 = (e1.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const t2 = (e2.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  
+  if (t1.includes(t2) || t2.includes(t1)) {
+    return true;
+  }
+  
+  return areTitlesDuplicate(e1.title, e2.title);
 }
 
 function processRawEvents(tvResult) {
@@ -1341,19 +1384,15 @@ function processRawEvents(tvResult) {
     };
   });
 
-  // 4. 第二階段：同日期時間、中文翻譯完全相同去重，保留數據齊全的一筆
+  // 4. 第二階段：智慧型去重與合併過濾器 (規則 A + 規則 B)
   const finalResult = [];
   for (const item of transformed) {
-    const dupIndex = finalResult.findIndex(fi => 
-      fi.date === item.date && 
-      fi.time === item.time && 
-      fi.title === item.title
-    );
+    const dupIndex = finalResult.findIndex(fi => isDuplicateEvent(fi, item));
     
     if (dupIndex !== -1) {
       const existingItem = finalResult[dupIndex];
-      const scoreExisting = getFieldScore(existingItem);
-      const scoreNew = getFieldScore(item);
+      const scoreExisting = getEventPriorityScore(existingItem);
+      const scoreNew = getEventPriorityScore(item);
       if (scoreNew > scoreExisting) {
         finalResult[dupIndex] = item;
       }
