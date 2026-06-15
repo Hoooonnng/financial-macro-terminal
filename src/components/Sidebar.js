@@ -354,7 +354,8 @@ class SidebarComponent {
                 hasVisibleLevels = true;
                 const fvgEl = document.createElement('span');
                 fvgEl.className = `tech-level fvg ${fvg.type} ${fvg.mitigated ? 'mitigated' : ''}`;
-                fvgEl.innerHTML = `🛡️ FVG (${fvg.type === 'bullish' ? '多' : '空'})${fvg.mitigated ? ' [已緩解]' : ''}: $${fvg.bottom.toFixed(2)}-$${fvg.top.toFixed(2)}`;
+                const dot = fvg.type === 'bullish' ? '🟢' : '🔴';
+                fvgEl.innerHTML = `${dot} FVG (${fvg.type === 'bullish' ? '多' : '空'})${fvg.mitigated ? ' [已緩解]' : ''}: $${fvg.bottom.toFixed(2)}-$${fvg.top.toFixed(2)}`;
                 techGroup.appendChild(fvgEl);
               }
             });
@@ -367,7 +368,8 @@ class SidebarComponent {
                 hasVisibleLevels = true;
                 const obEl = document.createElement('span');
                 obEl.className = `tech-level ob ${ob.type}`;
-                obEl.innerHTML = `📦 OB (${ob.type === 'bullish' ? '支' : '壓'}): $${ob.bottom.toFixed(2)}-$${ob.top.toFixed(2)}`;
+                const dot = ob.type === 'bullish' ? '🟢' : '🔴';
+                obEl.innerHTML = `${dot} OB (${ob.type === 'bullish' ? '支' : '壓'}): $${ob.bottom.toFixed(2)}-$${ob.top.toFixed(2)}`;
                 techGroup.appendChild(obEl);
               }
             });

@@ -993,10 +993,10 @@ body {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 12px;
-  transition: all 0.25s ease;
   position: relative;
   overflow: hidden;
   gap: 0.5rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* Silk smooth height/width layout transitions */
 }
 
 .stock-card:hover {
@@ -1134,14 +1134,32 @@ body {
 }
 
 /* Animations */
+.stock-card.flash-up .stock-price {
+  animation: price-text-up-flash 0.5s ease-out;
+}
+
+.stock-card.flash-down .stock-price {
+  animation: price-text-down-flash 0.5s ease-out;
+}
+
+@keyframes price-text-up-flash {
+  0% { color: #34d399; text-shadow: 0 0 8px rgba(52, 211, 153, 0.8); }
+  100% { color: var(--text-primary); text-shadow: none; }
+}
+
+@keyframes price-text-down-flash {
+  0% { color: #f87171; text-shadow: 0 0 8px rgba(248, 113, 113, 0.8); }
+  100% { color: var(--text-primary); text-shadow: none; }
+}
+
 @keyframes price-up-flash {
-  0% { background-color: rgba(16, 185, 129, 0.2); }
-  100% { background-color: rgba(255, 255, 255, 0.02); }
+  0% { background-color: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.25); }
+  100% { background-color: rgba(255, 255, 255, 0.02); border-color: rgba(255, 255, 255, 0.04); }
 }
 
 @keyframes price-down-flash {
-  0% { background-color: rgba(239, 68, 68, 0.2); }
-  100% { background-color: rgba(255, 255, 255, 0.02); }
+  0% { background-color: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25); }
+  100% { background-color: rgba(255, 255, 255, 0.02); border-color: rgba(255, 255, 255, 0.04); }
 }
 
 @keyframes pulse-glow-green {
@@ -1638,27 +1656,27 @@ body {
   justify-content: center;
   padding: 0.35rem 0.6rem;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   font-size: 0.72rem;
   font-weight: 600;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.35); /* dim grey when inactive */
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all 0.2s ease;
   user-select: none;
 }
 
 .layer-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.12);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .layer-toggle-btn.active {
-  background: rgba(14, 165, 233, 0.12);
-  border-color: rgba(14, 165, 233, 0.35);
-  color: var(--accent-cyan);
-  box-shadow: 0 0 8px rgba(14, 165, 233, 0.1);
+  background: rgba(16, 185, 129, 0.08) !important; /* light green active background */
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #34d399 !important; /* bright green text */
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.08);
 }
 
 .layer-toggle-btn input[type="checkbox"] {
@@ -1674,11 +1692,11 @@ body {
 .layer-toggle-btn.active span::before {
   content: '';
   display: inline-block;
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--accent-cyan);
-  box-shadow: 0 0 6px var(--accent-cyan);
+  background: #10b981; /* glowing green dot */
+  box-shadow: 0 0 8px #10b981;
 }
 
 /* Card Main part */
