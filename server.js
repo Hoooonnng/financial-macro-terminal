@@ -1497,69 +1497,85 @@ function processRawEvents(tvResult) {
 }
 
 const economicCalendarCache = {};
-const ECONOMIC_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+const ECONOMIC_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 
 async function fetchEconomicEvents(from, to) {
   const cacheKey = `${from}_${to}`;
   const cached = economicCalendarCache[cacheKey];
-  if (cached && (Date.now() - cached.timestamp < ECONOMIC_CACHE_DURATION)) {
+  const now = Date.now();
+
+  const fetcher = async () => {
+    try {
+      const url = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&countries=US`;
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.tradingview.com/',
+          'Origin': 'https://www.tradingview.com',
+          'Accept': 'application/json',
+          'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
+        },
+        timeout: 10000
+      });
+
+      const tvResult = response.data.result || [];
+      return processRawEvents(tvResult);
+    } catch (error) {
+      const parsedEvents = [];
+      try {
+        const startDate = new Date(from);
+        const endDate = new Date(to);
+        
+        let currYear = startDate.getFullYear();
+        let currMonth = startDate.getMonth() + 1;
+        const endYear = endDate.getFullYear();
+        const endMonth = endDate.getMonth() + 1;
+        
+        while (currYear < endYear || (currYear === endYear && currMonth <= endMonth)) {
+          const mockEvents = generateMockMacroEvents(currYear, currMonth);
+          parsedEvents.push(...mockEvents);
+          
+          currMonth++;
+          if (currMonth > 12) {
+            currMonth = 1;
+            currYear++;
+          }
+        }
+        
+        const startStr = from.substring(0, 10);
+        const endStr = to.substring(0, 10);
+        return parsedEvents.filter(e => e.date >= startStr && e.date <= endStr);
+      } catch (fallbackError) {
+        return [];
+      }
+    }
+  };
+
+  if (cached) {
+    const isExpired = now - cached.timestamp > ECONOMIC_CACHE_DURATION;
+    if (isExpired && !cached.revalidating) {
+      cached.revalidating = true;
+      fetcher().then(newData => {
+        cached.data = newData;
+        cached.timestamp = Date.now();
+        cached.revalidating = false;
+      }).catch(() => {
+        cached.revalidating = false; // keep old stale data
+      });
+    }
     return cached.data;
   }
 
-  try {
-    const url = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&countries=US`;
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.tradingview.com/',
-        'Origin': 'https://www.tradingview.com',
-        'Accept': 'application/json',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
-      },
-      timeout: 10000
-    });
-
-    const tvResult = response.data.result || [];
-    const finalResult = processRawEvents(tvResult);
-    
-    economicCalendarCache[cacheKey] = {
-      timestamp: Date.now(),
-      data: finalResult
-    };
-
-    return finalResult;
-  } catch (error) {
-    const parsedEvents = [];
-    try {
-      const startDate = new Date(from);
-      const endDate = new Date(to);
-      
-      let currYear = startDate.getFullYear();
-      let currMonth = startDate.getMonth() + 1;
-      const endYear = endDate.getFullYear();
-      const endMonth = endDate.getMonth() + 1;
-      
-      while (currYear < endYear || (currYear === endYear && currMonth <= endMonth)) {
-        const mockEvents = generateMockMacroEvents(currYear, currMonth);
-        parsedEvents.push(...mockEvents);
-        
-        currMonth++;
-        if (currMonth > 12) {
-          currMonth = 1;
-          currYear++;
-        }
-      }
-      
-      const startStr = from.substring(0, 10);
-      const endStr = to.substring(0, 10);
-      return parsedEvents.filter(e => e.date >= startStr && e.date <= endStr);
-    } catch (fallbackError) {
-      return [];
-    }
-  }
+  const data = await fetcher();
+  economicCalendarCache[cacheKey] = {
+    timestamp: Date.now(),
+    data: data,
+    revalidating: false
+  };
+  return data;
 }
 
-// API Endpoint - 取得總經事件數據 (整合 15 分鐘記憶體快取)
+// API Endpoint - 取得總經事件數據 (整合 1 小時 Stale-While-Revalidate 快取)
 app.get('/api/economic-calendar', async (req, res) => {
   let { from, to, year, month } = req.query;
 
@@ -1582,6 +1598,150 @@ app.get('/api/economic-calendar', async (req, res) => {
 
   const finalResult = await fetchEconomicEvents(from, to);
   return res.json(finalResult);
+});
+
+// Mock FRED observations generator when no API key or on rate limit
+function generateMockFredObservations(seriesId) {
+  const observations = [];
+  const now = new Date();
+  for (let i = 12; i >= 0; i--) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const dateStr = date.toISOString().split('T')[0];
+    let value = 0;
+    if (seriesId === 'CPIAUCSL') {
+      value = 320 + (12 - i) * 1.2 + Math.random() * 0.5;
+    } else if (seriesId === 'GDPC1') {
+      value = 22000 + (12 - i) * 80 + Math.random() * 20;
+    } else if (seriesId === 'PAYEMS') {
+      value = 158000 + (12 - i) * 150 + Math.random() * 50;
+    } else if (seriesId === 'UNRATE') {
+      value = 3.5 + Math.random() * 0.8;
+    } else if (seriesId === 'PCEPI') {
+      value = 130 + (12 - i) * 0.4 + Math.random() * 0.2;
+    } else if (seriesId === 'PPIACO') {
+      value = 230 + (12 - i) * 0.8 + Math.random() * 0.4;
+    } else if (seriesId === 'RSAFS') {
+      value = 680000 + (12 - i) * 3000 + Math.random() * 1000;
+    } else {
+      value = 100 + Math.random() * 10;
+    }
+    observations.push({
+      date: dateStr,
+      value: value.toFixed(2)
+    });
+  }
+  return observations;
+}
+
+const fredCache = {};
+const FRED_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+
+// API Endpoint - 取得 FRED 歷史總經走勢數據 (SWR 快取)
+app.get('/api/historical-data', async (req, res) => {
+  const series = (req.query.series || "CPI").toUpperCase();
+  const seriesMap = {
+    CPI: "CPIAUCSL",
+    GDP: "GDPC1",
+    NFP: "PAYEMS",
+    UNRATE: "UNRATE",
+    PCE: "PCEPI",
+    PPI: "PPIACO",
+    RETAIL: "RSAFS"
+  };
+  const seriesId = seriesMap[series] || "CPIAUCSL";
+  const fredApiKey = process.env.FRED_API_KEY || "";
+  
+  const fetcher = async () => {
+    if (!fredApiKey) {
+      return generateMockFredObservations(seriesId);
+    }
+    try {
+      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${fredApiKey}&file_type=json`;
+      const response = await axios.get(url, { timeout: 5000 });
+      return response.data.observations || [];
+    } catch (err) {
+      return generateMockFredObservations(seriesId);
+    }
+  };
+  
+  const now = Date.now();
+  const cached = fredCache[seriesId];
+  
+  if (cached) {
+    const isExpired = now - cached.timestamp > FRED_CACHE_DURATION;
+    if (isExpired && !cached.revalidating) {
+      cached.revalidating = true;
+      fetcher().then(newData => {
+        cached.data = newData;
+        cached.timestamp = Date.now();
+        cached.revalidating = false;
+      }).catch(() => {
+        cached.revalidating = false;
+      });
+    }
+    return res.json(cached.data);
+  }
+  
+  try {
+    const data = await fetcher();
+    fredCache[seriesId] = {
+      timestamp: Date.now(),
+      data: data,
+      revalidating: false
+    };
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch FRED data" });
+  }
+});
+
+// API Endpoint - 取得 FRED 原始 Observations 數據 (SWR 快取)
+app.get('/api/fred/observations', async (req, res) => {
+  const seriesId = req.query.series_id || "CPIAUCSL";
+  const fredApiKey = process.env.FRED_API_KEY || "";
+  
+  const fetcher = async () => {
+    if (!fredApiKey) {
+      return generateMockFredObservations(seriesId);
+    }
+    try {
+      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${fredApiKey}&file_type=json`;
+      const response = await axios.get(url, { timeout: 5000 });
+      return response.data.observations || [];
+    } catch (err) {
+      return generateMockFredObservations(seriesId);
+    }
+  };
+  
+  const now = Date.now();
+  const cached = fredCache[seriesId];
+  
+  if (cached) {
+    const isExpired = now - cached.timestamp > FRED_CACHE_DURATION;
+    if (isExpired && !cached.revalidating) {
+      cached.revalidating = true;
+      fetcher().then(newData => {
+        cached.data = newData;
+        cached.timestamp = Date.now();
+        cached.revalidating = false;
+      }).catch(() => {
+        cached.revalidating = false;
+      });
+    }
+    return res.json(cached.data);
+  }
+  
+  try {
+    const data = await fetcher();
+    fredCache[seriesId] = {
+      timestamp: Date.now(),
+      data: data,
+      revalidating: false
+    };
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch FRED observations" });
+  }
 });
 
 // ==========================================
