@@ -18,6 +18,17 @@ function getCompareClass(actual, consensus, compareType) {
   return 'val-neutral';
 }
 
+function isWithinProximity(levelOrZone, currentPrice) {
+  if (!levelOrZone) return false;
+  if (typeof levelOrZone === 'number') {
+    return Math.abs(levelOrZone - currentPrice) / currentPrice <= 0.03;
+  }
+  const { top, bottom } = levelOrZone;
+  if (currentPrice >= bottom && currentPrice <= top) return true;
+  if (currentPrice > top) return (currentPrice - top) / currentPrice <= 0.03;
+  return (bottom - currentPrice) / currentPrice <= 0.03;
+}
+
 class SidebarComponent {
   constructor(store, calendarComponent) {
     this.store = store;
@@ -29,9 +40,50 @@ class SidebarComponent {
 
     this.baseDate = new Date('2026-06-15T00:00:00');
     this.timelineEvents = [];
+
+    // 讀取/設定 SMC 與經典圖層顯示狀態 (LocalStorage)
+    this.showSMC = localStorage.getItem('layer_smc') !== 'false';
+    this.showClassic = localStorage.getItem('layer_classic') !== 'false';
+
+    this.initToggles();
     
     // 初始化獲取時間軸數據
     this.fetchTimelineEvents().then(() => this.render());
+  }
+
+  initToggles() {
+    const toggleSMC = document.getElementById('toggle-smc');
+    const toggleClassic = document.getElementById('toggle-classic');
+    const btnSMC = document.getElementById('btn-toggle-smc');
+    const btnClassic = document.getElementById('btn-toggle-classic');
+
+    if (toggleSMC && btnSMC) {
+      toggleSMC.checked = this.showSMC;
+      if (this.showSMC) btnSMC.classList.add('active');
+      else btnSMC.classList.remove('active');
+
+      toggleSMC.addEventListener('change', () => {
+        this.showSMC = toggleSMC.checked;
+        localStorage.setItem('layer_smc', this.showSMC);
+        if (this.showSMC) btnSMC.classList.add('active');
+        else btnSMC.classList.remove('active');
+        this.renderWatchlist(this.store.getState());
+      });
+    }
+
+    if (toggleClassic && btnClassic) {
+      toggleClassic.checked = this.showClassic;
+      if (this.showClassic) btnClassic.classList.add('active');
+      else btnClassic.classList.remove('active');
+
+      toggleClassic.addEventListener('change', () => {
+        this.showClassic = toggleClassic.checked;
+        localStorage.setItem('layer_classic', this.showClassic);
+        if (this.showClassic) btnClassic.classList.add('active');
+        else btnClassic.classList.remove('active');
+        this.renderWatchlist(this.store.getState());
+      });
+    }
   }
 
   async fetchTimelineEvents() {
@@ -278,8 +330,95 @@ class SidebarComponent {
       });
       rightDiv.appendChild(deleteBtn);
 
-      card.appendChild(leftDiv);
-      card.appendChild(rightDiv);
+      const cardMain = document.createElement('div');
+      cardMain.className = 'stock-card-main';
+      cardMain.appendChild(leftDiv);
+      cardMain.appendChild(rightDiv);
+      card.appendChild(cardMain);
+
+      // 戰術圖層與降噪過濾
+      if (stock.technicalLevels) {
+        const techDiv = document.createElement('div');
+        techDiv.className = 'stock-tech-levels';
+        let hasVisibleLevels = false;
+
+        // SMC 系統圖層
+        if (this.showSMC) {
+          const smcGroup = document.createElement('div');
+          smcGroup.className = 'tech-group smc-group';
+
+          // 公允價值跳空 (FVG)
+          if (stock.technicalLevels.fvgs) {
+            stock.technicalLevels.fvgs.forEach(fvg => {
+              if (isWithinProximity(fvg, stock.price)) {
+                hasVisibleLevels = true;
+                const fvgEl = document.createElement('span');
+                fvgEl.className = `tech-level fvg ${fvg.type} ${fvg.mitigated ? 'mitigated' : ''}`;
+                fvgEl.innerHTML = `🛡️ FVG (${fvg.type === 'bullish' ? '多' : '空'})${fvg.mitigated ? ' [已緩解]' : ''}: $${fvg.bottom.toFixed(2)}-$${fvg.top.toFixed(2)}`;
+                smcGroup.appendChild(fvgEl);
+              }
+            });
+          }
+
+          // 訂單塊 (OB)
+          if (stock.technicalLevels.obs) {
+            stock.technicalLevels.obs.forEach(ob => {
+              if (isWithinProximity(ob, stock.price)) {
+                hasVisibleLevels = true;
+                const obEl = document.createElement('span');
+                obEl.className = `tech-level ob ${ob.type}`;
+                obEl.innerHTML = `📦 OB (${ob.type === 'bullish' ? '支' : '壓'}): $${ob.bottom.toFixed(2)}-$${ob.top.toFixed(2)}`;
+                smcGroup.appendChild(obEl);
+              }
+            });
+          }
+
+          if (smcGroup.children.length > 0) {
+            techDiv.appendChild(smcGroup);
+          }
+        }
+
+        // 經典系統圖層
+        if (this.showClassic) {
+          const classicGroup = document.createElement('div');
+          classicGroup.className = 'tech-group classic-group';
+
+          // PDH (昨日最高點)
+          if (isWithinProximity(stock.technicalLevels.pdh, stock.price)) {
+            hasVisibleLevels = true;
+            const pdhEl = document.createElement('span');
+            pdhEl.className = 'tech-level pdh';
+            pdhEl.textContent = `📈 PDH: $${stock.technicalLevels.pdh.toFixed(2)}`;
+            classicGroup.appendChild(pdhEl);
+          }
+
+          // Open (當日開盤價)
+          if (isWithinProximity(stock.technicalLevels.open, stock.price)) {
+            hasVisibleLevels = true;
+            const openEl = document.createElement('span');
+            openEl.className = 'tech-level open';
+            openEl.textContent = `🔔 開盤: $${stock.technicalLevels.open.toFixed(2)}`;
+            classicGroup.appendChild(openEl);
+          }
+
+          // PDL (昨日最低點)
+          if (isWithinProximity(stock.technicalLevels.pdl, stock.price)) {
+            hasVisibleLevels = true;
+            const pdlEl = document.createElement('span');
+            pdlEl.className = 'tech-level pdl';
+            pdlEl.textContent = `📉 PDL: $${stock.technicalLevels.pdl.toFixed(2)}`;
+            classicGroup.appendChild(pdlEl);
+          }
+
+          if (classicGroup.children.length > 0) {
+            techDiv.appendChild(classicGroup);
+          }
+        }
+
+        if (hasVisibleLevels) {
+          card.appendChild(techDiv);
+        }
+      }
 
       card.addEventListener('click', () => {
         const earningsDate = state.earnings[ticker];

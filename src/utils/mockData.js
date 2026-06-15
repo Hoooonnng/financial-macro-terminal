@@ -84,3 +84,76 @@ window.getEventWeight = function(event) {
   }
   return 0;
 };
+
+window.getTickerHash = function(ticker) {
+  const upper = ticker.toUpperCase();
+  let hash = 0;
+  for (let i = 0; i < upper.length; i++) {
+    hash += upper.charCodeAt(i);
+  }
+  return hash;
+};
+
+window.generateTechnicalLevels = function(ticker, refPrice, actualOpen) {
+  const hash = window.getTickerHash(ticker);
+  
+  // 經典系統關卡偏移 (昨日最高 PDH/昨日最低 PDL/今日開盤 Open)
+  const pdhOffset = 0.012 + (hash % 25) / 1000;   // 1.2% - 3.7%
+  const pdlOffset = 0.012 + ((hash * 3) % 25) / 1000;
+  const openOffset = -0.008 + ((hash * 7) % 16) / 1000; // -0.8% - +0.8%
+  
+  const pdh = parseFloat((refPrice * (1 + pdhOffset)).toFixed(2));
+  const pdl = parseFloat((refPrice * (1 - pdlOffset)).toFixed(2));
+  const open = actualOpen ? parseFloat(actualOpen.toFixed(2)) : parseFloat((refPrice * (1 + openOffset)).toFixed(2));
+  
+  // SMC 系統關卡偏移 (FVG 公允價值跳空 / OB 訂單塊)
+  const fvgOffsetBull = 0.006 + ((hash * 11) % 15) / 1000; // 0.6% - 2.1%
+  const fvgOffsetBear = 0.006 + ((hash * 13) % 15) / 1000;
+  
+  const obOffsetBull = 0.018 + ((hash * 17) % 20) / 1000; // 1.8% - 3.8%
+  const obOffsetBear = 0.018 + ((hash * 19) % 20) / 1000;
+
+  const fvgBullBottom = refPrice * (1 - fvgOffsetBull - 0.012);
+  const fvgBullTop = refPrice * (1 - fvgOffsetBull);
+  
+  const fvgBearBottom = refPrice * (1 + fvgOffsetBear);
+  const fvgBearTop = refPrice * (1 + fvgOffsetBear + 0.012);
+
+  const obBullBottom = refPrice * (1 - obOffsetBull - 0.015);
+  const obBullTop = refPrice * (1 - obOffsetBull);
+
+  const obBearBottom = refPrice * (1 + obOffsetBear);
+  const obBearTop = refPrice * (1 + obOffsetBear + 0.015);
+
+  return {
+    pdh,
+    pdl,
+    open,
+    fvgs: [
+      {
+        type: 'bullish',
+        bottom: parseFloat(fvgBullBottom.toFixed(2)),
+        top: parseFloat(fvgBullTop.toFixed(2)),
+        mitigated: false
+      },
+      {
+        type: 'bearish',
+        bottom: parseFloat(fvgBearBottom.toFixed(2)),
+        top: parseFloat(fvgBearTop.toFixed(2)),
+        mitigated: false
+      }
+    ],
+    obs: [
+      {
+        type: 'bullish',
+        bottom: parseFloat(obBullBottom.toFixed(2)),
+        top: parseFloat(obBullTop.toFixed(2))
+      },
+      {
+        type: 'bearish',
+        bottom: parseFloat(obBearBottom.toFixed(2)),
+        top: parseFloat(obBearTop.toFixed(2))
+      }
+    ]
+  };
+};

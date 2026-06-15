@@ -1606,3 +1606,152 @@ body {
   box-shadow: 0 0 30px rgba(192, 132, 252, 0.08);
 }
 
+/* ==========================================
+   Phase 3: 行情看板戰術圖層與動態視覺降噪
+   ========================================== */
+
+/* Layer Toggle Pill Buttons */
+.watchlist-layer-toggles {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.01);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  margin-bottom: 0.5rem;
+}
+
+.layer-toggle-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.layer-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.layer-toggle-btn.active {
+  background: rgba(14, 165, 233, 0.12);
+  border-color: rgba(14, 165, 233, 0.35);
+  color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgba(14, 165, 233, 0.1);
+}
+
+.layer-toggle-btn input[type="checkbox"] {
+  display: none;
+}
+
+.layer-toggle-btn span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.layer-toggle-btn.active span::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 6px var(--accent-cyan);
+}
+
+/* Card Main part */
+.stock-card-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+/* Technical levels wrapper */
+.stock-tech-levels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  margin-top: 0.2rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.04);
+  width: 100%;
+}
+
+.tech-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.tech-level {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.2s ease;
+}
+
+/* SMC FVG: 10% Opacity Low-Saturation blocks */
+.tech-level.fvg.bullish {
+  background: rgba(52, 211, 153, 0.1); /* 10% opacity low-sat green */
+  color: rgba(52, 211, 153, 0.85);
+  border: 1px solid rgba(52, 211, 153, 0.05);
+}
+
+.tech-level.fvg.bearish {
+  background: rgba(248, 113, 113, 0.1); /* 10% opacity low-sat red */
+  color: rgba(248, 113, 113, 0.85);
+  border: 1px solid rgba(248, 113, 113, 0.05);
+}
+
+/* FVG Mitigation Fade: Fade to 2% opacity or hide */
+.tech-level.fvg.mitigated {
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: rgba(255, 255, 255, 0.15) !important;
+  border-color: transparent !important;
+  text-decoration: line-through;
+  opacity: 0.4;
+}
+
+/* SMC Order Blocks (OB) */
+.tech-level.ob.bullish {
+  background: rgba(16, 185, 129, 0.08);
+  border-left: 2px solid rgba(16, 185, 129, 0.6);
+  color: rgba(16, 185, 129, 0.9);
+}
+
+.tech-level.ob.bearish {
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 2px solid rgba(239, 68, 68, 0.6);
+  color: rgba(239, 68, 68, 0.9);
+}
+
+/* Classic levels: PDH & PDL with thin dashed lines */
+.tech-level.pdh,
+.tech-level.pdl {
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  color: var(--text-muted);
+}
+
+/* Daily Open Level */
+.tech-level.open {
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.15);
+  color: var(--accent-cyan);
+}
+

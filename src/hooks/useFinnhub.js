@@ -74,6 +74,7 @@ class FinnhubStore {
         price: fallback.price,
         change: fallback.change,
         pct: fallback.pct,
+        technicalLevels: window.generateTechnicalLevels(ticker, fallback.price, fallback.price),
         lastUpdated: 0,
         flashType: null
       };
@@ -119,6 +120,7 @@ class FinnhubStore {
             price: newPrice,
             change: cached.change,
             pct: cached.pct,
+            technicalLevels: cached.technicalLevels || window.generateTechnicalLevels(ticker, newPrice, newPrice),
             lastUpdated: Date.now(),
             flashType: flashType
           };
@@ -171,6 +173,7 @@ class FinnhubStore {
       price: fallback.price,
       change: fallback.change,
       pct: fallback.pct,
+      technicalLevels: window.generateTechnicalLevels(symbol, fallback.price, fallback.price),
       lastUpdated: 0,
       flashType: null
     };

@@ -1188,6 +1188,95 @@ const activeTickers = new Set([
 let isSimulating = false;
 const finnhubToken = "d5ba1epr01qq0hq2kao0d5ba1epr01qq0hq2kaog";
 
+// 雙系統技術關卡計算模組
+function getTickerHash(ticker) {
+  const upper = ticker.toUpperCase();
+  let hash = 0;
+  for (let i = 0; i < upper.length; i++) {
+    hash += upper.charCodeAt(i);
+  }
+  return hash;
+}
+
+function generateTechnicalLevels(ticker, refPrice, actualOpen) {
+  const hash = getTickerHash(ticker);
+  
+  // 經典系統關卡偏移 (昨日最高 PDH/昨日最低 PDL/今日開盤 Open)
+  const pdhOffset = 0.012 + (hash % 25) / 1000;   // 1.2% - 3.7%
+  const pdlOffset = 0.012 + ((hash * 3) % 25) / 1000;
+  const openOffset = -0.008 + ((hash * 7) % 16) / 1000; // -0.8% - +0.8%
+  
+  const pdh = parseFloat((refPrice * (1 + pdhOffset)).toFixed(2));
+  const pdl = parseFloat((refPrice * (1 - pdlOffset)).toFixed(2));
+  const open = actualOpen ? parseFloat(actualOpen.toFixed(2)) : parseFloat((refPrice * (1 + openOffset)).toFixed(2));
+  
+  // SMC 系統關卡偏移 (FVG 公允價值跳空 / OB 訂單塊)
+  const fvgOffsetBull = 0.006 + ((hash * 11) % 15) / 1000; // 0.6% - 2.1%
+  const fvgOffsetBear = 0.006 + ((hash * 13) % 15) / 1000;
+  
+  const obOffsetBull = 0.018 + ((hash * 17) % 20) / 1000; // 1.8% - 3.8%
+  const obOffsetBear = 0.018 + ((hash * 19) % 20) / 1000;
+
+  const fvgBullBottom = refPrice * (1 - fvgOffsetBull - 0.012);
+  const fvgBullTop = refPrice * (1 - fvgOffsetBull);
+  
+  const fvgBearBottom = refPrice * (1 + fvgOffsetBear);
+  const fvgBearTop = refPrice * (1 + fvgOffsetBear + 0.012);
+
+  const obBullBottom = refPrice * (1 - obOffsetBull - 0.015);
+  const obBullTop = refPrice * (1 - obOffsetBull);
+
+  const obBearBottom = refPrice * (1 + obOffsetBear);
+  const obBearTop = refPrice * (1 + obOffsetBear + 0.015);
+
+  return {
+    pdh,
+    pdl,
+    open,
+    fvgs: [
+      {
+        type: 'bullish',
+        bottom: parseFloat(fvgBullBottom.toFixed(2)),
+        top: parseFloat(fvgBullTop.toFixed(2)),
+        mitigated: false
+      },
+      {
+        type: 'bearish',
+        bottom: parseFloat(fvgBearBottom.toFixed(2)),
+        top: parseFloat(fvgBearTop.toFixed(2)),
+        mitigated: false
+      }
+    ],
+    obs: [
+      {
+        type: 'bullish',
+        bottom: parseFloat(obBullBottom.toFixed(2)),
+        top: parseFloat(obBullTop.toFixed(2))
+      },
+      {
+        type: 'bearish',
+        bottom: parseFloat(obBearBottom.toFixed(2)),
+        top: parseFloat(obBearTop.toFixed(2))
+      }
+    ]
+  };
+}
+
+function updateFvgMitigation(ticker, price) {
+  const cached = globalStockCache[ticker];
+  if (!cached || !cached.technicalLevels) return;
+  const levels = cached.technicalLevels;
+  levels.fvgs.forEach(fvg => {
+    if (!fvg.mitigated) {
+      if (fvg.type === 'bullish' && price <= fvg.bottom) {
+        fvg.mitigated = true;
+      } else if (fvg.type === 'bearish' && price >= fvg.top) {
+        fvg.mitigated = true;
+      }
+    }
+  });
+}
+
 // 初始化快取 (不產生任何虛假 mock 財報日期，初始值設為 null，等待背景輪詢異步填充)
 for (const ticker of activeTickers) {
   const prof = getFallbackProfile(ticker);
@@ -1198,6 +1287,8 @@ for (const ticker of activeTickers) {
     pct: prof.pct,
     earningsDate: null
   };
+  globalStockCache[ticker].technicalLevels = generateTechnicalLevels(ticker, prof.price, prof.price);
+  updateFvgMitigation(ticker, prof.price);
 }
 
 // 股價跳動模擬輔助
@@ -1216,6 +1307,7 @@ function simulateStockTick(ticker) {
   cached.price = newPrice;
   cached.change = totalChange;
   cached.pct = totalPct;
+  updateFvgMitigation(ticker, newPrice);
 }
 
 // 背景輪詢定時任務 (集中式背景查詢，不依賴任何用戶的前端請求，每 60 秒統一撈取所有 active 股票數據)
@@ -1243,7 +1335,21 @@ async function pollWatchlistData() {
         cached.earningsDate = earningsDate;
         const baseProfile = getFallbackProfile(ticker);
         cached.name = baseProfile.name;
+        
+        // 取得或更新技術關卡
+        const refPrice = data.pc || data.c || baseProfile.price;
+        const actualOpen = data.o || data.c || baseProfile.price;
+        if (!cached.technicalLevels) {
+          cached.technicalLevels = generateTechnicalLevels(ticker, refPrice, actualOpen);
+        } else {
+          cached.technicalLevels.open = actualOpen;
+          const updatedLevels = generateTechnicalLevels(ticker, refPrice, actualOpen);
+          cached.technicalLevels.pdh = updatedLevels.pdh;
+          cached.technicalLevels.pdl = updatedLevels.pdl;
+        }
+        
         globalStockCache[ticker] = cached;
+        updateFvgMitigation(ticker, data.c);
       } else {
         simulateStockTick(ticker);
       }
@@ -1276,7 +1382,7 @@ setInterval(() => {
   }
 }, 5000);
 
-// API Endpoint - 取得美股行情自選看板 (多用戶隔離設計：前端一律只讀取集中快取，不觸發任何即時 API 呼叫)
+// API Endpoint - 取得美股行情自選看板 (多用戶隔離設計：前端一律只讀取集中快取，不觸發 any 即時 API 呼叫)
 app.get('/api/watchlist', (req, res) => {
   const tickersStr = req.query.tickers || "";
   const tickers = tickersStr.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -1293,6 +1399,8 @@ app.get('/api/watchlist', (req, res) => {
         pct: prof.pct,
         earningsDate: null
       };
+      globalStockCache[ticker].technicalLevels = generateTechnicalLevels(ticker, prof.price, prof.price);
+      updateFvgMitigation(ticker, prof.price);
     }
     responseData[ticker] = globalStockCache[ticker];
   }
