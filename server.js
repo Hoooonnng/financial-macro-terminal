@@ -1027,38 +1027,51 @@ function getEventFamily(title) {
     return "pce-other" + suffix;
   }
   
-  // CPI Family
-  if (t.includes("cpi") || t.includes("消費者物價指數") || t.includes("inflation") || t.includes("通膨")) {
+  // CPI Family (Exclude inflation expectations like Michigan Inflation Expectations)
+  if ((t.includes("cpi") || t.includes("消費者物價指數") || t.includes("inflation") || t.includes("通膨")) &&
+      !(t.includes("expectation") || t.includes("預期") || t.includes("michigan") || t.includes("密西根"))) {
     if (t.includes("yoy") || t.includes("年增率")) return "cpi-yoy" + suffix;
     if (t.includes("mom") || t.includes("月增率")) return "cpi-mom" + suffix;
     return "cpi-index" + suffix;
   }
   
-  // Unemployment Family
+  // Unemployment Family (Distinguish standard from U-6)
   if (t.includes("unemployment") || t.includes("失業率")) {
-    return "unemployment";
+    if (t.includes("u-6") || t.includes("u6")) return "unemployment-u6";
+    return "unemployment-standard";
   }
   
-  // Nonfarm Family
+  // Nonfarm Family (Distinguish standard headline from private NFP)
   if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農")) {
-    return "nonfarm";
+    if (t.includes("private") || t.includes("私營") || t.includes("私人")) return "nonfarm-private";
+    return "nonfarm-headline";
   }
   
-  // GDP Family
+  // GDP Family (Distinguish growth rate, price index, sales)
   if (t.includes("gdp") || t.includes("國內生產總值")) {
-    return "gdp";
+    if (t.includes("growth") || t.includes("rate") || t.includes("成長") || t.includes("增速")) return "gdp-growth";
+    if (t.includes("price") || t.includes("物價") || t.includes("平減") || t.includes("deflator")) return "gdp-price";
+    if (t.includes("sales") || t.includes("銷售")) return "gdp-sales";
+    return "gdp-other";
   }
   
-  // PMI Family
+  // PMI Family (Distinguish services, manufacturing, composite)
   if (t.includes("pmi") || t.includes("採購經理人指數")) {
     if (t.includes("services") || t.includes("服務業")) return "pmi-services";
     if (t.includes("manufacturing") || t.includes("製造業")) return "pmi-manufacturing";
     return "pmi-other";
   }
   
-  // Retail Sales Family
+  // Retail Sales Family (Distinguish MoM, YoY, ex autos, ex gas, control group)
   if (t.includes("retail sales") || t.includes("零售銷售")) {
-    return "retail";
+    if (t.includes("yoy") || t.includes("年增率")) return "retail-yoy";
+    if (t.includes("mom") || t.includes("月增率")) {
+      if (t.includes("ex autos") || t.includes("扣除汽車")) return "retail-mom-ex-autos";
+      if (t.includes("ex gas") || t.includes("扣除燃料")) return "retail-mom-ex-gas";
+      if (t.includes("control") || t.includes("對照")) return "retail-mom-control";
+      return "retail-mom-headline";
+    }
+    return "retail-other";
   }
   
   return null;
@@ -1297,37 +1310,20 @@ app.get('/api/stocks', (req, res) => {
 // 數據清洗、去重合併核心處理模組 (processRawEvents)
 // ==========================================
 
+// STRICT deduplication check: only duplicate if identical names after normalizing punctuation and s.a. tags
 function areTitlesDuplicate(t1, t2) {
-  const low1 = (t1 || "").toLowerCase();
-  const low2 = (t2 || "").toLowerCase();
-  
-  // YoY, MoM, QoQ are different metrics and must never be considered duplicates
-  const hasYoy1 = low1.includes("yoy") || low1.includes("y/y") || low1.includes("年增率");
-  const hasYoy2 = low2.includes("yoy") || low2.includes("y/y") || low2.includes("年增率");
-  if (hasYoy1 !== hasYoy2) return false;
-  
-  const hasMom1 = low1.includes("mom") || low1.includes("m/m") || low1.includes("月增率");
-  const hasMom2 = low2.includes("mom") || low2.includes("m/m") || low2.includes("月增率");
-  if (hasMom1 !== hasMom2) return false;
-  
-  // Core vs headline CPI are different metrics
-  const hasCore1 = low1.includes("core") || low1.includes("核心");
-  const hasCore2 = low2.includes("core") || low2.includes("核心");
-  if (hasCore1 !== hasCore2) return false;
-  
-  const w1 = low1.replace(/[^a-z0-9\s]/g, "").trim().split(/\s+/).filter(Boolean);
-  const w2 = low2.replace(/[^a-z0-9\s]/g, "").trim().split(/\s+/).filter(Boolean);
-  if (w1.length === 0 || w2.length === 0) return false;
-  const minWords = Math.min(w1.length, w2.length, 3);
-  let matchCount = 0;
-  for (let i = 0; i < minWords; i++) {
-    if (w1[i] === w2[i]) {
-      matchCount++;
-    } else {
-      break;
-    }
-  }
-  return matchCount >= 2;
+  const normalize = (title) => {
+    return (title || "")
+      .toLowerCase()
+      .replace(/[\(\)\-\,\.\/]/g, " ")
+      .replace(/\b(s\.?a\.?|seasonally adjusted|季調|調整|adjusted)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+  const n1 = normalize(t1);
+  const n2 = normalize(t2);
+  if (n1 === "" || n2 === "") return false;
+  return n1 === n2;
 }
 
 function getPrimaryScore(title) {
