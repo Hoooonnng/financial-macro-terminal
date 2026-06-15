@@ -1435,6 +1435,18 @@ app.post('/api/line-webhook', lineWebhookMiddleware, (req, res) => {
     });
 });
 
+app.post('/webhook', lineWebhookMiddleware, (req, res) => {
+  if (!lineClient) {
+    return res.json([]);
+  }
+  Promise
+    .all(req.body.events.map(handleLineEvent))
+    .then((result) => res.json(result))
+    .catch((err) => {
+      res.status(500).end();
+    });
+});
+
 async function handleLineEvent(event) {
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
