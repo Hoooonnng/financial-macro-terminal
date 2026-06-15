@@ -1103,8 +1103,8 @@ async function getRealEarningsDate(ticker) {
   }
 }
 
-// 行情快取與訂閱列表
-const watchlistCache = {};
+// 行情快取與訂閱列表 (集中式集中快取系統，完全杜絕多用戶連線消耗 API 額度)
+const globalStockCache = {};
 const activeTickers = new Set([
   "TSLA", "TSLL", "SPCX", "OUST", "SOFI", 
   "GRAB", "CRCL", "NVDA", "GOOG", "MSFT", 
@@ -1118,7 +1118,7 @@ const finnhubToken = "d5ba1epr01qq0hq2kao0d5ba1epr01qq0hq2kaog";
 // 初始化快取 (不產生任何虛假 mock 財報日期，初始值設為 null，等待背景輪詢異步填充)
 for (const ticker of activeTickers) {
   const prof = getFallbackProfile(ticker);
-  watchlistCache[ticker] = {
+  globalStockCache[ticker] = {
     name: prof.name,
     price: prof.price,
     change: prof.change,
@@ -1129,7 +1129,7 @@ for (const ticker of activeTickers) {
 
 // 股價跳動模擬輔助
 function simulateStockTick(ticker) {
-  const cached = watchlistCache[ticker];
+  const cached = globalStockCache[ticker];
   if (!cached) return;
   
   const pctChange = (Math.random() * 0.4 - 0.2) / 100; // -0.2% ~ +0.2%
@@ -1145,7 +1145,7 @@ function simulateStockTick(ticker) {
   cached.pct = totalPct;
 }
 
-// 背景輪詢定時任務 (抓取行情及真實財報)
+// 背景輪詢定時任務 (集中式背景查詢，不依賴任何用戶的前端請求，每 60 秒統一撈取所有 active 股票數據)
 async function pollWatchlistData() {
   const tickersArray = Array.from(activeTickers);
   for (const ticker of tickersArray) {
@@ -1163,14 +1163,14 @@ async function pollWatchlistData() {
       const earningsDate = await getRealEarningsDate(ticker);
       
       if (data && typeof data.c === 'number' && data.c > 0) {
-        const cached = watchlistCache[ticker] || {};
+        const cached = globalStockCache[ticker] || {};
         cached.price = data.c;
         cached.change = data.d || 0;
         cached.pct = data.dp || 0;
         cached.earningsDate = earningsDate;
         const baseProfile = getFallbackProfile(ticker);
         cached.name = baseProfile.name;
-        watchlistCache[ticker] = cached;
+        globalStockCache[ticker] = cached;
       } else {
         simulateStockTick(ticker);
       }
@@ -1203,9 +1203,7 @@ setInterval(() => {
   }
 }, 5000);
 
-// API Endpoint - 取得美股行情自選看板 (多用戶隔離設計：後端不儲存個別用戶的自選股清單)
-// 用戶的自選清單完全儲存在瀏覽器的 localStorage 中，每次透過 Query Parameter 傳入，
-// 後端只作為行情數據之代理/模擬快取，不進行任何跨用戶之數據存儲或共享。
+// API Endpoint - 取得美股行情自選看板 (多用戶隔離設計：前端一律只讀取集中快取，不觸發任何即時 API 呼叫)
 app.get('/api/watchlist', (req, res) => {
   const tickersStr = req.query.tickers || "";
   const tickers = tickersStr.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -1213,27 +1211,26 @@ app.get('/api/watchlist', (req, res) => {
   const responseData = {};
   for (const ticker of tickers) {
     activeTickers.add(ticker);
-    if (!watchlistCache[ticker]) {
+    if (!globalStockCache[ticker]) {
       const prof = getFallbackProfile(ticker);
-      watchlistCache[ticker] = {
+      globalStockCache[ticker] = {
         name: prof.name,
         price: prof.price,
         change: prof.change,
         pct: prof.pct,
         earningsDate: null
       };
-      // 對於新加入的股票，立即異步發起真實財報日期與行情獲取
-      getRealEarningsDate(ticker).then(date => {
-        if (watchlistCache[ticker]) {
-          watchlistCache[ticker].earningsDate = date;
-        }
-      });
     }
-    responseData[ticker] = watchlistCache[ticker];
+    responseData[ticker] = globalStockCache[ticker];
   }
   
   responseData.isSimulating = isSimulating;
   res.json(responseData);
+});
+
+// API Endpoint - 集中式股票數據快取回傳 (無條件直接回傳 globalStockCache)
+app.get('/api/stocks', (req, res) => {
+  res.json(globalStockCache);
 });
 
 // ==========================================
