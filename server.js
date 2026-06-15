@@ -1508,25 +1508,7 @@ app.post('/webhook', lineWebhookMiddleware, (req, res) => {
     });
 });
 
-// 臨時手動測試推播端點
-app.get('/api/test-line-push', async (req, res) => {
-  if (!lineClient) {
-    return res.status(400).send("LINE Bot is not configured (missing secret/token).");
-  }
-  const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
-  if (!targetId) {
-    return res.status(400).send("LINE_USER_ID or LINE_GROUP_ID environment variable is missing.");
-  }
-  try {
-    await lineClient.pushMessage(targetId, {
-      type: 'text',
-      text: '總監您好，美股總經終端機雲端推播連線測試成功！🚀'
-    });
-    return res.send("SUCCESS: Test message sent successfully!");
-  } catch (err) {
-    return res.status(500).send("ERROR: " + err.message);
-  }
-});
+
 
 async function handleLineEvent(event) {
   if (event.type !== 'message' || event.message.type !== 'text') {
@@ -1693,19 +1675,4 @@ setInterval(checkLiveEventActuals, 30000);
 
 app.listen(PORT, () => {
   console.log(`伺服器正在運行: http://localhost:${PORT}`);
-  
-  // 伺服器啟動時一次性手動測試推播 (若密鑰與目標用戶ID存在)
-  if (lineClient) {
-    const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
-    if (targetId) {
-      lineClient.pushMessage(targetId, {
-        type: 'text',
-        text: '總監您好，美股總經終端機雲端推播連線測試成功！🚀'
-      }).then(() => {
-        console.log("LINE startup test push success!");
-      }).catch((err) => {
-        console.error("LINE startup test push failed:", err.message);
-      });
-    }
-  }
 });
