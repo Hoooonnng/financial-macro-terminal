@@ -1965,20 +1965,24 @@ async function handleLineEvent(event) {
   });
 }
 
+// ==========================================
+// 晨報核心邏輯（可被內部定時器與外部 Cron 端點共同調用）
+// ==========================================
+
 // 產生晨報文字
 async function generateDailyReportText() {
   const now = new Date();
-  const taipeiTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
-  const dateStr = taipeiTime.toISOString().split('T')[0];
+  // 精確計算台灣時區當日日期字串
+  const taipeiDateStr = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }))
+    .toLocaleDateString("en-CA"); // en-CA 格式即 YYYY-MM-DD，避免 ISO 時差偏移
   
-  const fromStr = `${dateStr}T00:00:00Z`;
-  const toStr = `${dateStr}T23:59:59Z`;
+  const fromStr = `${taipeiDateStr}T00:00:00Z`;
+  const toStr = `${taipeiDateStr}T23:59:59Z`;
   
   const events = await fetchEconomicEvents(fromStr, toStr);
-  
   const highImpactEvents = events.filter(e => e.importance === 3);
   
-  let reportText = `📢 財經終端機晨報 (${dateStr})\n`;
+  let reportText = `📢 財經終端機晨報 (${taipeiDateStr})\n`;
   reportText += `----------------------------\n`;
   
   if (highImpactEvents.length === 0) {
@@ -1997,33 +2001,73 @@ async function generateDailyReportText() {
   return reportText;
 }
 
-// 定時晨報發送機制 (每天台灣時間早上 08:00)
+// 晨報核心推播函數（解耦：可被任何觸發源調用）
+async function sendMorningReport(triggeredBy) {
+  if (!lineClient) {
+    console.warn(`⚠️ [晨報] 觸發源: ${triggeredBy} | LINE Client 未初始化，跳過推播。`);
+    return { ok: false, reason: 'LINE client not initialized' };
+  }
+  const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
+  if (!targetId) {
+    console.warn(`⚠️ [晨報] 觸發源: ${triggeredBy} | 未設定 LINE_USER_ID 或 LINE_GROUP_ID，跳過推播。`);
+    return { ok: false, reason: 'No target LINE ID configured' };
+  }
+  try {
+    const reportText = await generateDailyReportText();
+    await lineClient.pushMessage(targetId, { type: 'text', text: reportText });
+    console.log(`✅ [晨報] 觸發源: ${triggeredBy} | 晨報已成功推播至 LINE。`);
+    return { ok: true };
+  } catch (err) {
+    console.error(`❌ [晨報] 觸發源: ${triggeredBy} | 推播失敗:`, err.message);
+    return { ok: false, reason: err.message };
+  }
+}
+
+// ==========================================
+// 外部 Cron 觸發端點 (供 UptimeRobot / cron-job.org 每日 08:00 台北時間呼叫)
+// GET /api/cron/morning-report
+// 設定外部服務呼叫此網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
+// ==========================================
+app.get('/api/cron/morning-report', async (req, res) => {
+  console.log(`🌅 [晨報端點] 收到外部 Cron 請求，時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`);
+  try {
+    const result = await sendMorningReport('外部 Cron 端點');
+    if (result.ok) {
+      return res.status(200).json({ success: true, message: '晨報已成功推播至 LINE。' });
+    } else {
+      return res.status(200).json({ success: false, message: result.reason });
+    }
+  } catch (err) {
+    console.error('❌ [晨報端點] 未預期錯誤:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 內部定時器雙重保險 (每60秒掃描台灣時間，精確比對 08:00)
+// 注意：Render 免費版休眠時此定時器會失效，請以外部 Cron 為主觸發源
+// ==========================================
 let lastMorningReportDate = "";
 
 async function checkMorningReportSchedule() {
-  const now = new Date();
-  const taipeiTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
-  const dateStr = taipeiTime.toISOString().split('T')[0];
-  
-  if (taipeiTime.getHours() === 8 && taipeiTime.getMinutes() === 0 && lastMorningReportDate !== dateStr) {
-    lastMorningReportDate = dateStr;
-    if (lineClient) {
-      try {
-        const reportText = await generateDailyReportText();
-        const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
-        if (targetId) {
-          await lineClient.pushMessage(targetId, {
-            type: 'text',
-            text: reportText
-          });
-        }
-      } catch (err) {
-        // 靜默容錯
-      }
+  try {
+    const now = new Date();
+    // 使用 toLocaleDateString 取得台灣時區正確日期，避免 ISO 字串時差偏移
+    const taipeiDateStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+    const taipeiHour = parseInt(new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" })).getHours(), 10);
+    const taipeiMin = parseInt(new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" })).getMinutes(), 10);
+    
+    // 觸發條件：台灣時間 08:00，且今天尚未發送
+    if (taipeiHour === 8 && taipeiMin === 0 && lastMorningReportDate !== taipeiDateStr) {
+      lastMorningReportDate = taipeiDateStr;
+      console.log(`🕗 [內部定時器] 偵測到台灣時間 08:00，啟動晨報...`);
+      await sendMorningReport('內部定時器');
     }
+  } catch (err) {
+    // 靜默容錯，避免定時器因例外停止
   }
 }
-setInterval(checkMorningReportSchedule, 30000); // 每30秒檢測一次時間
+setInterval(checkMorningReportSchedule, 60000); // 每60秒掃描一次（從30秒升級，降低CPU）
 
 // 即時數據發布捷報 (每30秒背景輪詢今日數據發布狀態)
 const liveActualCache = {};
