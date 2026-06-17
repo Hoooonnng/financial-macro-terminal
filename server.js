@@ -1941,36 +1941,69 @@ app.post('/webhook', lineWebhookMiddleware, (req, res) => {
 
 
 async function handleLineEvent(event) {
-  // 監聽新加好友 (follow 事件)
+
+  // ==========================================
+  // 【1】加入好友事件 (Follow Event) - 精美歡迎詞
+  // ==========================================
   if (event.type === 'follow') {
     try {
+      // 記錄新好友暱稱至伺服器日誌
       const userId = event.source.userId;
       if (userId) {
-        const profile = await lineClient.getProfile(userId);
-        console.log(`🟢 [新好友報到] 暱稱: ${profile.displayName}`);
+        try {
+          const profile = await lineClient.getProfile(userId);
+          console.log(`🟢 [新好友報到] 暱稱: ${profile.displayName}`);
+        } catch (profileErr) {
+          console.log(`🟢 [新好友報到] userId: ${userId} (無法取得暱稱)`);
+        }
+      }
+
+      // 主動推送加入好友歡迎詞
+      const followWelcomeText =
+        `===============================\n` +
+        `👋 您好！歡迎加入【美股總經即時終端機】！\n\n` +
+        `很高興能與您一同鎖定全球市場的核心動向。本帳號將化身為您的「AI 總經特助」，為您提供第一手的市場燃料：\n\n` +
+        `📊 【每日 08:00 總經晨報】\n` +
+        `採用 24 小時交易員滾動窗口，提早預告當日美股開盤、深夜、凌晨的所有重磅要事，幫您做好最完整的戰術準備。\n\n` +
+        `⚡ 【秒級重磅數據推播】\n` +
+        `當 CPI、非農、FOMC 利率決策等重大數據開出瞬間，後端將自動精算多空偏差，並在第一時間將數據與驚喜度貼標推送至您的手機。\n\n` +
+        `👇 現在就點擊下方連結，開啟您的完整互動行事曆與 SMC 戰術看板，解鎖 2ms 極速看盤體感：\n` +
+        `https://financial-macro-terminal.onrender.com\n` +
+        `===============================`;
+
+      // follow 事件需使用 pushMessage（replyToken 不可用於 follow）
+      if (userId) {
+        await lineClient.pushMessage(userId, {
+          type: 'text',
+          text: followWelcomeText
+        });
+        console.log(`✅ [新好友歡迎詞] 已推送至 userId: ${userId}`);
       }
     } catch (err) {
-      console.error('處理新加好友事件錯誤:', err.message);
+      console.error('❌ [新好友歡迎詞] 推送失敗:', err.message);
     }
     return Promise.resolve(null);
   }
 
-  // 所有文字訊息一律回覆統一引導訊息（智慧網址自動回覆）
+  // ==========================================
+  // 【2】日常訊息事件 (Message Event) - 自動回覆說明
+  // ==========================================
   if (event.type === 'message' && event.message.type === 'text') {
     try {
-      const welcomeText =
+      const autoReplyText =
         `===============================\n` +
-        `📈 歡迎使用美股總經即時終端機！\n\n` +
-        `本帳號主要提供「每日 08:00 總經晨報」與「重磅數據即時秒級推播」。\n\n` +
-        `👉 查看完整互動行事曆與 SMC 戰術看板：\n` +
-        `https://financial-macro-terminal.onrender.com\n` +
+        `🤖 收到您的訊息！\n\n` +
+        `本帳號目前由 AI 系統全面接管，專注於提供「每日 08:00 滾動晨報」與「重磅數據秒級推播」，暫時無法透過此對話框個別回覆您的聊天內容喔！\n\n` +
+        `如果您想隨時查看行事曆、切換 SMC 戰術看板，請直接點擊我們的終端機網頁連結：\n` +
+        `👉 https://financial-macro-terminal.onrender.com\n\n` +
+        `（💡 提示：若有任何帳號權限或系統使用問題，歡迎隨時與管理團隊聯繫，我們將會進場協助排錯！）\n` +
         `===============================`;
       return lineClient.replyMessage(event.replyToken, {
         type: 'text',
-        text: welcomeText
+        text: autoReplyText
       });
     } catch (err) {
-      console.error('LINE 自動回覆錯誤:', err.message);
+      console.error('❌ [自動回覆] 回覆失敗:', err.message);
       return Promise.resolve(null);
     }
   }
