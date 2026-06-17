@@ -2247,35 +2247,6 @@ async function sendLiveDataFlash(event) {
 // 啟動即時發布檢測
 setInterval(checkLiveEventActuals, 30000);
 
-async function performHistoryFollowersLookup() {
-  if (!lineClient) return;
-  try {
-    const followerIdsResult = await lineClient.getBotFollowersIds();
-    const userIds = followerIdsResult.userIds || followerIdsResult.ids || [];
-    
-    if (userIds.length === 0) {
-      console.log("🔍 [歷史好友名單盤點] 無現存好友 ID。");
-      return;
-    }
-    
-    const profiles = [];
-    for (const userId of userIds) {
-      try {
-        const profile = await lineClient.getProfile(userId);
-        profiles.push(profile.displayName);
-      } catch (err) {
-        profiles.push(`未知用戶 (${userId.slice(0, 8)}...)`);
-      }
-    }
-    
-    const namesList = profiles.map((name, idx) => `${idx + 1}. 暱稱: ${name}`).join(' | ');
-    console.log(`🔍 [歷史好友名單盤點] ${namesList}`);
-  } catch (err) {
-    console.error("🔍 [歷史好友名單盤點] 發生錯誤:", err.message);
-  }
-}
-
 app.listen(PORT, () => {
-  console.log(`伺服器正在運行: http://localhost:${PORT}`);
-  performHistoryFollowersLookup();
+  console.log(`✅ 財經終端機伺服器正在運行: http://localhost:${PORT}`);
 });
