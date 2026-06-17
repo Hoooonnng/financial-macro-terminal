@@ -1541,16 +1541,26 @@ function processRawEvents(tvResult) {
     }
   }
 
-  // 3. 資料欄位轉換與中文化翻譯
+  // 3. 資料欄位轉換與中文化翻譯（強制 UTC → Asia/Taipei +8h 時區轉換）
   const transformed = uniqueResult.map(e => {
+    // TradingView API 傳回的 e.date 為 UTC ISO 字串（例如 "2026-06-18T18:00:00Z"）
+    // Render 伺服器執行環境為 UTC，直接 new Date().getHours() 會得到 UTC 小時
+    // 必須明確轉換為 Asia/Taipei (UTC+8) 時間，確保 FOMC 18:00 UTC → 02:00 次日台北時間
     const dateObj = new Date(e.date);
-    const y = dateObj.getFullYear();
-    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const d = String(dateObj.getDate()).padStart(2, '0');
-    const dateStr = `${y}-${m}-${d}`;
     
-    const hh = String(dateObj.getHours()).padStart(2, '0');
-    const mm = String(dateObj.getMinutes()).padStart(2, '0');
+    // 使用 toLocaleString 強制轉換至 Asia/Taipei 並提取各部分
+    const taipeiLocale = dateObj.toLocaleString('en-CA', { timeZone: 'Asia/Taipei', hour12: false });
+    // en-CA 格式："YYYY-MM-DD, HH:MM:SS" 或 "YYYY-MM-DD, 24:MM:SS"（午夜邊界時24h)
+    const [datePart, timePart] = taipeiLocale.split(', ');
+    const dateStr = datePart.trim(); // YYYY-MM-DD
+    
+    // 解析時間部分，處理 "24:xx:xx" 邊界情況（轉為 "00:xx"）
+    const timeParts = (timePart || '00:00:00').trim().split(':');
+    let hour = parseInt(timeParts[0], 10);
+    const minute = parseInt(timeParts[1] || '0', 10);
+    if (hour === 24) hour = 0; // 邊界處理
+    const hh = String(hour).padStart(2, '0');
+    const mm = String(minute).padStart(2, '0');
     const timeStr = `${hh}:${mm}`;
 
     const translated = translateEvent(e);
@@ -1940,65 +1950,98 @@ async function handleLineEvent(event) {
         console.log(`🟢 [新好友報到] 暱稱: ${profile.displayName}`);
       }
     } catch (err) {
-      console.error("處理新加好友事件錯誤:", err.message);
+      console.error('處理新加好友事件錯誤:', err.message);
     }
     return Promise.resolve(null);
   }
 
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return Promise.resolve(null);
+  // 所有文字訊息一律回覆統一引導訊息（智慧網址自動回覆）
+  if (event.type === 'message' && event.message.type === 'text') {
+    try {
+      const welcomeText =
+        `===============================\n` +
+        `📈 歡迎使用美股總經即時終端機！\n\n` +
+        `本帳號主要提供「每日 08:00 總經晨報」與「重磅數據即時秒級推播」。\n\n` +
+        `👉 查看完整互動行事曆與 SMC 戰術看板：\n` +
+        `https://financial-macro-terminal.onrender.com\n` +
+        `===============================`;
+      return lineClient.replyMessage(event.replyToken, {
+        type: 'text',
+        text: welcomeText
+      });
+    } catch (err) {
+      console.error('LINE 自動回覆錯誤:', err.message);
+      return Promise.resolve(null);
+    }
   }
-  
-  const userText = event.message.text.trim();
-  
-  if (userText.includes("晨報") || userText.includes("今日") || userText.includes("要事")) {
-    const reportText = await generateDailyReportText();
-    return lineClient.replyMessage(event.replyToken, {
-      type: 'text',
-      text: reportText
-    });
-  }
-  
-  return lineClient.replyMessage(event.replyToken, {
-    type: 'text',
-    text: `您好！我是財經終端機 Bot。🤖\n\n輸入「今日要事」或「晨報」可獲取今日重大數據與高衝擊總經指標預報！`
-  });
+
+  return Promise.resolve(null);
 }
 
 // ==========================================
 // 晨報核心邏輯（可被內部定時器與外部 Cron 端點共同調用）
 // ==========================================
 
-// 產生晨報文字
+// 產生晨報文字（8AM-to-8AM 交易員滾動窗口）
 async function generateDailyReportText() {
   const now = new Date();
-  // 精確計算台灣時區當日日期字串
-  const taipeiDateStr = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }))
-    .toLocaleDateString("en-CA"); // en-CA 格式即 YYYY-MM-DD，避免 ISO 時差偏移
   
-  const fromStr = `${taipeiDateStr}T00:00:00Z`;
-  const toStr = `${taipeiDateStr}T23:59:59Z`;
+  // ── 計算台灣時間今天 08:00 與明天 08:00 ──
+  // 取得台灣今日日期字串 (YYYY-MM-DD)
+  const taipeiTodayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
   
-  const events = await fetchEconomicEvents(fromStr, toStr);
-  const highImpactEvents = events.filter(e => e.importance === 3);
+  // 台灣 08:00 = UTC 00:00（UTC+8 的 08:00 即 UTC 前一日的 00:00 與當日 00:00 之差）
+  // 更準確做法：直接構造台灣時間的 ISO 字串後轉 UTC
+  // 台灣今天 08:00 → UTC: 當天日期 T00:00:00Z
+  const windowFromUTC = `${taipeiTodayStr}T00:00:00Z`;
   
-  let reportText = `📢 財經終端機晨報 (${taipeiDateStr})\n`;
+  // 台灣明天 08:00 → UTC: 明天日期 T00:00:00Z
+  const tomorrowDate = new Date(Date.UTC(
+    ...taipeiTodayStr.split('-').map((v, i) => i === 1 ? parseInt(v) - 1 : parseInt(v))
+  ));
+  tomorrowDate.setUTCDate(tomorrowDate.getUTCDate() + 1);
+  const taipeiTomorrowStr = tomorrowDate.toISOString().split('T')[0];
+  const windowToUTC = `${taipeiTomorrowStr}T00:00:00Z`;
+  
+  // 多抓一天的緩衝確保跨日事件不遺漏（API 以 date 欄位查詢）
+  const events = await fetchEconomicEvents(windowFromUTC, windowToUTC);
+  
+  // 篩選台灣時間 08:00 ~ 隔日 07:59 的高衝擊事件
+  const highImpactEvents = events
+    .filter(e => e.importance === 3)
+    .filter(e => {
+      // 比對事件的台灣日期與時間是否落在滾動窗口內
+      const eventDatetime = `${e.date}T${e.time || '00:00'}`;
+      const windowStart = `${taipeiTodayStr}T08:00`;
+      const windowEnd = `${taipeiTomorrowStr}T07:59`;
+      return eventDatetime >= windowStart && eventDatetime <= windowEnd;
+    })
+    .sort((a, b) => {
+      const dtA = `${a.date}T${a.time || '00:00'}`;
+      const dtB = `${b.date}T${b.time || '00:00'}`;
+      return dtA.localeCompare(dtB);
+    });
+  
+  let reportText = `📢 財經終端機晨報\n`;
+  reportText += `🗓 ${taipeiTodayStr} 08:00 ～ ${taipeiTomorrowStr} 08:00\n`;
   reportText += `----------------------------\n`;
   
   if (highImpactEvents.length === 0) {
-    reportText += `今天無重大高衝擊總經事件。`;
+    reportText += `本交易窗口無重大高衝擊總經事件。`;
   } else {
-    reportText += `今日高衝擊核心要事預告：\n\n`;
+    reportText += `⚡ 本窗口高衝擊核心要事預告：\n\n`;
     highImpactEvents.forEach((e, idx) => {
-      reportText += `${idx + 1}. 【${e.title}】\n`;
-      reportText += `   ⏱️ 時間: ${e.time}\n`;
+      // 判斷是否為跨日事件（明天的）
+      const crossDay = e.date !== taipeiTodayStr ? ` (${e.date})` : '';
+      reportText += `${idx + 1}. 【${e.title}】${crossDay}\n`;
+      reportText += `   ⏱️ 台北時間: ${e.time}\n`;
       reportText += `   📊 預測值: ${e.consensus || '無'}\n`;
       reportText += `   📉 前值: ${e.previous || '無'}\n\n`;
     });
   }
   
-  reportText += `💡 提示：輸入「今日要事」可隨時查詢即時狀態。`;
-  return reportText;
+  // 不再附加「輸入今日要事」提示（已刪除）
+  return reportText.trim();
 }
 
 // 晨報核心推播函數（解耦：可被任何觸發源調用）
