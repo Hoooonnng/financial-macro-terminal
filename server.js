@@ -2120,30 +2120,12 @@ app.get('/api/cron/morning-report', async (req, res) => {
 });
 
 // ==========================================
-// 內部定時器雙重保險 (每60秒掃描台灣時間，精確比對 08:00)
-// 注意：Render 免費版休眠時此定時器會失效，請以外部 Cron 為主觸發源
+// 晨報推播：完全交由外部 cron-job.org 觸發
+// 端點：GET /api/cron/morning-report
+// 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
+// 時間：每日 UTC 00:00（= 台北時間 08:00）
 // ==========================================
-let lastMorningReportDate = "";
 
-async function checkMorningReportSchedule() {
-  try {
-    const now = new Date();
-    // 使用 toLocaleDateString 取得台灣時區正確日期，避免 ISO 字串時差偏移
-    const taipeiDateStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
-    const taipeiHour = parseInt(new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" })).getHours(), 10);
-    const taipeiMin = parseInt(new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" })).getMinutes(), 10);
-    
-    // 觸發條件：台灣時間 08:00，且今天尚未發送
-    if (taipeiHour === 8 && taipeiMin === 0 && lastMorningReportDate !== taipeiDateStr) {
-      lastMorningReportDate = taipeiDateStr;
-      console.log(`🕗 [內部定時器] 偵測到台灣時間 08:00，啟動晨報...`);
-      await sendMorningReport('內部定時器');
-    }
-  } catch (err) {
-    // 靜默容錯，避免定時器因例外停止
-  }
-}
-setInterval(checkMorningReportSchedule, 60000); // 每60秒掃描一次（從30秒升級，降低CPU）
 
 // 即時數據發布捷報 (每30秒背景輪詢今日數據發布狀態)
 const liveActualCache = {};
