@@ -2103,11 +2103,64 @@ async function sendMorningReport(triggeredBy) {
 // GET /api/cron/morning-report
 // 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
 //
-// 架構：Fire-and-Forget 非同步秒回
-//   1. 收到請求 → 立刻回傳 { success: true, msg: "OK" }（< 1ms）
-//   2. 重型邏輯（數據抓取、LINE 推播）移入背景非同步執行
-//   優點：cron-job.org 永遠不會觸發 30 秒超時；回傳體積 < 30 bytes，根除「輸出過大」
+// 架構：Fire-and-Forget + Self-Healing 自癒重試狀態機
+//   1. 收到請求 → 立刻回傳 { success: true, msg: "OK" }（< 1ms，防超時/防輸出過大）
+//   2. 背景執行晨報邏輯；若失敗，自動最多重試 3 次（每次間隔 5 分鐘）
+//   3. 同一天成功發出後，後續重試一律跳過（防重複推播）
 // ==========================================
+
+// 自癒狀態記錄（同一天已成功發送則鎖定，防止重複推播）
+let cronLastSuccessDate = '';
+
+// 核心自癒執行器（遞迴重試，最多 MAX_RETRIES 次）
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 5 * 60 * 1000; // 5 分鐘
+
+async function runMorningReportWithRetry(retryCount = 0) {
+  // 每次執行前先檢查今天是否已成功發出（防重複推播）
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+  if (cronLastSuccessDate === todayStr) {
+    console.log(`🔒 [自癒系統] 今日晨報已成功發出（${todayStr}），跳過本次執行。`);
+    return;
+  }
+
+  try {
+    if (retryCount > 0) {
+      console.warn(`⚠️ [自癒系統點火] 晨報發送失敗，正在進行第 ${retryCount} 次非同步自動補發...`);
+    } else {
+      console.log(`⚙️ [晨報背景] 開始執行晨報數據抓取與 LINE 推播...`);
+    }
+
+    const result = await sendMorningReport(
+      retryCount === 0 ? '外部 Cron 端點（背景）' : `自癒重試第 ${retryCount} 次`
+    );
+
+    if (result.ok) {
+      // 成功：鎖定今日，停止一切後續重試
+      cronLastSuccessDate = todayStr;
+      if (retryCount > 0) {
+        console.log(`✅ [自癒成功] 晨報已於延遲重試中順利補發完畢。`);
+      } else {
+        console.log(`✅ [晨報背景] 推播完成。`);
+      }
+    } else {
+      // 推播邏輯本身回傳失敗（如 LINE Client 未初始化、無 TARGET_ID）
+      throw new Error(result.reason || '推播回傳失敗');
+    }
+  } catch (err) {
+    console.error(`❌ [晨報背景] 第 ${retryCount} 次執行失敗: ${err.message}`);
+
+    if (retryCount < MAX_RETRIES) {
+      const nextRetry = retryCount + 1;
+      const delayMin = RETRY_DELAY_MS / 60000;
+      console.warn(`⏳ [自癒排程] 將於 ${delayMin} 分鐘後自動觸發第 ${nextRetry} 次補發...`);
+      setTimeout(() => runMorningReportWithRetry(nextRetry), RETRY_DELAY_MS);
+    } else {
+      console.error(`🚨 [自癒放棄] 已達最大重試上限（${MAX_RETRIES} 次），今日晨報補發終止。請至 Render 日誌手動排查。`);
+    }
+  }
+}
+
 app.get('/api/cron/morning-report', (req, res) => {
   const triggerTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   console.log(`🌅 [晨報端點] 收到外部 Cron 請求，台北時間: ${triggerTime}`);
@@ -2115,29 +2168,10 @@ app.get('/api/cron/morning-report', (req, res) => {
   // 【步驟 1】立刻秒回極輕量 JSON，確保 cron-job.org 不超時、不輸出過大
   res.status(200).json({ success: true, msg: 'OK' });
 
-  // 【步驟 2】將重型邏輯推入背景執行（setImmediate 確保 response 先發出）
-  setImmediate(async () => {
-    try {
-      console.log(`⚙️ [晨報背景] 開始執行晨報數據抓取與 LINE 推播...`);
-      const result = await sendMorningReport('外部 Cron 端點（背景）');
-      if (result.ok) {
-        console.log(`✅ [晨報背景] 推播完成。`);
-      } else {
-        console.warn(`⚠️ [晨報背景] 推播未完成: ${result.reason}`);
-      }
-    } catch (err) {
-      console.error(`❌ [晨報背景] 未預期錯誤:`, err.message);
-    }
-  });
+  // 【步驟 2】推入背景執行（setImmediate 確保 response 先發出），啟動自癒狀態機
+  setImmediate(() => runMorningReportWithRetry(0));
 });
 
-
-// ==========================================
-// 晨報推播：完全交由外部 cron-job.org 觸發
-// 端點：GET /api/cron/morning-report
-// 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
-// 時間：每日 UTC 00:00（= 台北時間 08:00）
-// ==========================================
 
 
 // 即時數據發布捷報 (每30秒背景輪詢今日數據發布狀態)
