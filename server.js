@@ -2025,15 +2025,14 @@ async function generateDailyReportText() {
   
   // 台灣 08:00 = UTC 00:00（UTC+8 的 08:00 即 UTC 前一日的 00:00 與當日 00:00 之差）
   // 更準確做法：直接構造台灣時間的 ISO 字串後轉 UTC
-  // 台灣今天 08:00 → UTC: 當天日期 T00:00:00Z
+  // 台灣今天 08:00 → UTC：當天日期 T00:00:00Z
   const windowFromUTC = `${taipeiTodayStr}T00:00:00Z`;
   
-  // 台灣明天 08:00 → UTC: 明天日期 T00:00:00Z
-  const tomorrowDate = new Date(Date.UTC(
-    ...taipeiTodayStr.split('-').map((v, i) => i === 1 ? parseInt(v) - 1 : parseInt(v))
-  ));
-  tomorrowDate.setUTCDate(tomorrowDate.getUTCDate() + 1);
-  const taipeiTomorrowStr = tomorrowDate.toISOString().split('T')[0];
+  // 台灣明天 08:00 → UTC：明天日期 T00:00:00Z
+  // 使用純字串計算，避免 Date.UTC spread 展開的腦弱假設
+  const [tyY, tyM, tyD] = taipeiTodayStr.split('-').map(Number);
+  const tomorrowDateObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 1));
+  const taipeiTomorrowStr = tomorrowDateObj.toISOString().split('T')[0];
   const windowToUTC = `${taipeiTomorrowStr}T00:00:00Z`;
   
   // 多抓一天的緩衝確保跨日事件不遺漏（API 以 date 欄位查詢）
@@ -2134,9 +2133,13 @@ let isFirstLiveLoad = true;
 async function checkLiveEventActuals() {
   try {
     const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
-    const fromStr = `${dateStr}T00:00:00Z`;
-    const toStr = `${dateStr}T23:59:59Z`;
+    // 【BUG FIX】原來用 toISOString().split('T')[0] 取 UTC 日期
+    // 導致台北時間 00:00-07:59（UTC 前一天 16:00-23:59）查詢到错誤的前一天事件
+    // 修復：改用台灣時區日期，確保凸馨 重磅數據即時偵測覆蓋台灣全天
+    const taipeiDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+    // 查詢範圍：台灣今日 00:00 ~ 23:59（UTC: 前一天 16:00 ~ 當天 15:59）
+    const fromStr = `${taipeiDateStr}T00:00:00+08:00`;
+    const toStr   = `${taipeiDateStr}T23:59:59+08:00`;
     
     const processed = await fetchEconomicEvents(fromStr, toStr);
     
