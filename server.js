@@ -2099,24 +2099,38 @@ async function sendMorningReport(triggeredBy) {
 }
 
 // ==========================================
-// 外部 Cron 觸發端點 (供 UptimeRobot / cron-job.org 每日 08:00 台北時間呼叫)
+// 外部 Cron 觸發端點 (供 cron-job.org 每日 UTC 00:00 = 台北 08:00 呼叫)
 // GET /api/cron/morning-report
-// 設定外部服務呼叫此網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
+// 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
+//
+// 架構：Fire-and-Forget 非同步秒回
+//   1. 收到請求 → 立刻回傳 { success: true, msg: "OK" }（< 1ms）
+//   2. 重型邏輯（數據抓取、LINE 推播）移入背景非同步執行
+//   優點：cron-job.org 永遠不會觸發 30 秒超時；回傳體積 < 30 bytes，根除「輸出過大」
 // ==========================================
-app.get('/api/cron/morning-report', async (req, res) => {
-  console.log(`🌅 [晨報端點] 收到外部 Cron 請求，時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`);
-  try {
-    const result = await sendMorningReport('外部 Cron 端點');
-    if (result.ok) {
-      return res.status(200).json({ success: true, message: '晨報已成功推播至 LINE。' });
-    } else {
-      return res.status(200).json({ success: false, message: result.reason });
+app.get('/api/cron/morning-report', (req, res) => {
+  const triggerTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+  console.log(`🌅 [晨報端點] 收到外部 Cron 請求，台北時間: ${triggerTime}`);
+
+  // 【步驟 1】立刻秒回極輕量 JSON，確保 cron-job.org 不超時、不輸出過大
+  res.status(200).json({ success: true, msg: 'OK' });
+
+  // 【步驟 2】將重型邏輯推入背景執行（setImmediate 確保 response 先發出）
+  setImmediate(async () => {
+    try {
+      console.log(`⚙️ [晨報背景] 開始執行晨報數據抓取與 LINE 推播...`);
+      const result = await sendMorningReport('外部 Cron 端點（背景）');
+      if (result.ok) {
+        console.log(`✅ [晨報背景] 推播完成。`);
+      } else {
+        console.warn(`⚠️ [晨報背景] 推播未完成: ${result.reason}`);
+      }
+    } catch (err) {
+      console.error(`❌ [晨報背景] 未預期錯誤:`, err.message);
     }
-  } catch (err) {
-    console.error('❌ [晨報端點] 未預期錯誤:', err.message);
-    return res.status(500).json({ success: false, error: err.message });
-  }
+  });
 });
+
 
 // ==========================================
 // 晨報推播：完全交由外部 cron-job.org 觸發
