@@ -2152,17 +2152,18 @@ const RETRY_DELAY_MS = 5 * 60 * 1000; // 5 分鐘
 
 // ==========================================
 // 【優化三】總監 LINE 即時回報輔助函數
-// 失敗/重試/放棄時，強制通知 ADMIN_LINE_USER_ID
+// 失敗/重試/放棄時，強制通知 LINE_USER_ID（與主推播共用同一變數）
 // ==========================================
 async function notifyAdmin(message) {
   if (!lineClient) return;
-  const adminId = process.env.ADMIN_LINE_USER_ID;
+  const adminId = process.env.LINE_USER_ID;  // 對齊 Render 後台實際變數名稱
   if (!adminId) return;
   try {
     await lineClient.pushMessage(adminId, { type: 'text', text: message });
   } catch (err) {
     console.error('❌ [總監通報] 通知失敗:', err.message);
   }
+
 }
 
 // ==========================================
