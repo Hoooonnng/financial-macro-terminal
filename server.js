@@ -2012,58 +2012,98 @@ async function handleLineEvent(event) {
 }
 
 // ==========================================
-// 晨報核心邏輯（可被內部定時器與外部 Cron 端點共同調用）
+// 晨報核心邏輯 — 平日常態 + 週末差別化報告
 // ==========================================
 
-// 產生晨報文字（8AM-to-8AM 交易員滾動窗口）
+// 輔助：取得台灣時間的星期幾（0=週日, 1=週一 ... 6=週六）
+function getTaipeiDayOfWeek() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' })).getDay();
+}
+
+// 【週六】週末市場週報回顧：彙整過去一整週的重磅總經結果
+async function generateWeeklyReviewText() {
+  const now = new Date();
+  const taipeiTodayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+  const [tyY, tyM, tyD] = taipeiTodayStr.split('-').map(Number);
+  // 往前 7 天
+  const weekAgoObj = new Date(Date.UTC(tyY, tyM - 1, tyD - 6));
+  const weekAgoStr = weekAgoObj.toISOString().split('T')[0];
+
+  const events = await fetchEconomicEvents(`${weekAgoStr}T00:00:00Z`, `${taipeiTodayStr}T23:59:59Z`);
+  const pastHighImpact = events
+    .filter(e => e.importance === 3 && e.actual && e.actual.toString().trim() !== '')
+    .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
+
+  let text = `📊 【週末市場週報回顧】\n`;
+  text += `🗓 ${weekAgoStr} ～ ${taipeiTodayStr}\n`;
+  text += `----------------------------\n`;
+  if (pastHighImpact.length === 0) {
+    text += `本週無已發布的高衝擊總經數據。`;
+  } else {
+    text += `本週重磅數據發布結果：\n\n`;
+    pastHighImpact.forEach((e, idx) => {
+      text += `${idx + 1}. 【${e.title}】(${e.date})\n`;
+      text += `   ✅ 實際值: ${e.actual}　預測: ${e.consensus || '無'}　前值: ${e.previous || '無'}\n\n`;
+    });
+  }
+  return text.trim();
+}
+
+// 【週日】下週前瞻：未來 7 天嚴格高衝擊事件預告
+async function generateWeeklyPreviewText() {
+  const now = new Date();
+  const taipeiTodayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+  const [tyY, tyM, tyD] = taipeiTodayStr.split('-').map(Number);
+  const nextWeekObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 7));
+  const nextWeekStr = nextWeekObj.toISOString().split('T')[0];
+
+  const events = await fetchEconomicEvents(`${taipeiTodayStr}T00:00:00Z`, `${nextWeekStr}T23:59:59Z`);
+  const upcoming = events
+    .filter(e => e.importance === 3)
+    .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
+
+  let text = `🔮 【下週市場重大前瞻預告】\n`;
+  text += `🗓 ${taipeiTodayStr} ～ ${nextWeekStr}（未來 7 日高衝擊）\n`;
+  text += `----------------------------\n`;
+  if (upcoming.length === 0) {
+    text += `下週無高衝擊總經事件預排。`;
+  } else {
+    text += `⚡ 核心重磅事件超前部署：\n\n`;
+    upcoming.forEach((e, idx) => {
+      text += `${idx + 1}. 【${e.title}】(${e.date} ${e.time})\n`;
+      text += `   📊 預測值: ${e.consensus || '無'}　📉 前值: ${e.previous || '無'}\n\n`;
+    });
+  }
+  return text.trim();
+}
+
+// 【週一至週五】平日常態晨報：8AM-to-8AM 交易員滾動窗口
 async function generateDailyReportText() {
   const now = new Date();
-  
-  // ── 計算台灣時間今天 08:00 與明天 08:00 ──
-  // 取得台灣今日日期字串 (YYYY-MM-DD)
   const taipeiTodayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-  
-  // 台灣 08:00 = UTC 00:00（UTC+8 的 08:00 即 UTC 前一日的 00:00 與當日 00:00 之差）
-  // 更準確做法：直接構造台灣時間的 ISO 字串後轉 UTC
-  // 台灣今天 08:00 → UTC：當天日期 T00:00:00Z
   const windowFromUTC = `${taipeiTodayStr}T00:00:00Z`;
-  
-  // 台灣明天 08:00 → UTC：明天日期 T00:00:00Z
-  // 使用純字串計算，避免 Date.UTC spread 展開的腦弱假設
   const [tyY, tyM, tyD] = taipeiTodayStr.split('-').map(Number);
   const tomorrowDateObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 1));
   const taipeiTomorrowStr = tomorrowDateObj.toISOString().split('T')[0];
   const windowToUTC = `${taipeiTomorrowStr}T00:00:00Z`;
-  
-  // 多抓一天的緩衝確保跨日事件不遺漏（API 以 date 欄位查詢）
+
   const events = await fetchEconomicEvents(windowFromUTC, windowToUTC);
-  
-  // 篩選台灣時間 08:00 ~ 隔日 07:59 的高衝擊事件
   const highImpactEvents = events
     .filter(e => e.importance === 3)
     .filter(e => {
-      // 比對事件的台灣日期與時間是否落在滾動窗口內
       const eventDatetime = `${e.date}T${e.time || '00:00'}`;
-      const windowStart = `${taipeiTodayStr}T08:00`;
-      const windowEnd = `${taipeiTomorrowStr}T07:59`;
-      return eventDatetime >= windowStart && eventDatetime <= windowEnd;
+      return eventDatetime >= `${taipeiTodayStr}T08:00` && eventDatetime <= `${taipeiTomorrowStr}T07:59`;
     })
-    .sort((a, b) => {
-      const dtA = `${a.date}T${a.time || '00:00'}`;
-      const dtB = `${b.date}T${b.time || '00:00'}`;
-      return dtA.localeCompare(dtB);
-    });
-  
+    .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
+
   let reportText = `📢 財經終端機晨報\n`;
   reportText += `🗓 ${taipeiTodayStr} 08:00 ～ ${taipeiTomorrowStr} 08:00\n`;
   reportText += `----------------------------\n`;
-  
   if (highImpactEvents.length === 0) {
     reportText += `本交易窗口無重大高衝擊總經事件。`;
   } else {
     reportText += `⚡ 本窗口高衝擊核心要事預告：\n\n`;
     highImpactEvents.forEach((e, idx) => {
-      // 判斷是否為跨日事件（明天的）
       const crossDay = e.date !== taipeiTodayStr ? ` (${e.date})` : '';
       reportText += `${idx + 1}. 【${e.title}】${crossDay}\n`;
       reportText += `   ⏱️ 台北時間: ${e.time}\n`;
@@ -2071,8 +2111,6 @@ async function generateDailyReportText() {
       reportText += `   📉 前值: ${e.previous || '無'}\n\n`;
     });
   }
-  
-  // 不再附加「輸入今日要事」提示（已刪除）
   return reportText.trim();
 }
 
@@ -2099,76 +2137,150 @@ async function sendMorningReport(triggeredBy) {
 }
 
 // ==========================================
-// 外部 Cron 觸發端點 (供 cron-job.org 每日 UTC 00:00 = 台北 08:00 呼叫)
-// GET /api/cron/morning-report
-// 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
-//
-// 架構：Fire-and-Forget + Self-Healing 自癒重試狀態機
-//   1. 收到請求 → 立刻回傳 { success: true, msg: "OK" }（< 1ms，防超時/防輸出過大）
-//   2. 背景執行晨報邏輯；若失敗，自動最多重試 3 次（每次間隔 5 分鐘）
-//   3. 同一天成功發出後，後續重試一律跳過（防重複推播）
+// Cron 系統全域狀態變數
 // ==========================================
 
-// 自癒狀態記錄（同一天已成功發送則鎖定，防止重複推播）
+// 【優化一】並發防禦鎖：防止 cron-job.org 重試觸發雙胞胎推播
+let isReportingActive = false;
+
+// 今日成功鎖：同一天已成功發送則全面封鎖後續重試
 let cronLastSuccessDate = '';
 
-// 核心自癒執行器（遞迴重試，最多 MAX_RETRIES 次）
+// 自癒重試參數
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5 * 60 * 1000; // 5 分鐘
 
+// ==========================================
+// 【優化三】總監 LINE 即時回報輔助函數
+// 失敗/重試/放棄時，強制通知 ADMIN_LINE_USER_ID
+// ==========================================
+async function notifyAdmin(message) {
+  if (!lineClient) return;
+  const adminId = process.env.ADMIN_LINE_USER_ID;
+  if (!adminId) return;
+  try {
+    await lineClient.pushMessage(adminId, { type: 'text', text: message });
+  } catch (err) {
+    console.error('❌ [總監通報] 通知失敗:', err.message);
+  }
+}
+
+// ==========================================
+// 【優化二】週末差別化晨報選擇器
+// 根據台北時間星期幾，選擇對應的報告生成器
+// ==========================================
+async function generateSmartReportText() {
+  const dow = getTaipeiDayOfWeek(); // 0=週日, 6=週六
+  if (dow === 6) {
+    console.log('📊 [晨報] 今日為週六，產生週末週報回顧...');
+    return await generateWeeklyReviewText();
+  } else if (dow === 0) {
+    console.log('🔮 [晨報] 今日為週日，產生下週前瞻預告...');
+    return await generateWeeklyPreviewText();
+  } else {
+    console.log('📢 [晨報] 平日模式，產生 24h 滾動窗口晨報...');
+    return await generateDailyReportText();
+  }
+}
+
+// ==========================================
+// 核心自癒執行器（Mutex 鎖 + 週末差別化 + 總監回報）
+// ==========================================
 async function runMorningReportWithRetry(retryCount = 0) {
-  // 每次執行前先檢查今天是否已成功發出（防重複推播）
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+
+  // 今日成功鎖：已成功發出則全面跳過
   if (cronLastSuccessDate === todayStr) {
     console.log(`🔒 [自癒系統] 今日晨報已成功發出（${todayStr}），跳過本次執行。`);
+    isReportingActive = false;
     return;
   }
 
   try {
     if (retryCount > 0) {
-      console.warn(`⚠️ [自癒系統點火] 晨報發送失敗，正在進行第 ${retryCount} 次非同步自動補發...`);
+      const retryMsg = `⚠️ [自癒系統點火] 晨報發送失敗，正在進行第 ${retryCount} 次非同步自動補發...`;
+      console.warn(retryMsg);
     } else {
       console.log(`⚙️ [晨報背景] 開始執行晨報數據抓取與 LINE 推播...`);
     }
 
-    const result = await sendMorningReport(
-      retryCount === 0 ? '外部 Cron 端點（背景）' : `自癒重試第 ${retryCount} 次`
-    );
+    // 取得目標推播 ID
+    if (!lineClient) throw new Error('LINE client not initialized');
+    const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
+    if (!targetId) throw new Error('No target LINE ID configured');
 
-    if (result.ok) {
-      // 成功：鎖定今日，停止一切後續重試
-      cronLastSuccessDate = todayStr;
-      if (retryCount > 0) {
-        console.log(`✅ [自癒成功] 晨報已於延遲重試中順利補發完畢。`);
-      } else {
-        console.log(`✅ [晨報背景] 推播完成。`);
-      }
+    // 【優化二】根據台北星期幾選擇對應報告
+    const reportText = await generateSmartReportText();
+    await lineClient.pushMessage(targetId, { type: 'text', text: reportText });
+
+    // 成功：鎖定今日，釋放 Mutex，停止後續重試
+    cronLastSuccessDate = todayStr;
+    isReportingActive = false;
+    if (retryCount > 0) {
+      console.log(`✅ [自癒成功] 晨報已於延遲重試中順利補發完畢。`);
+      await notifyAdmin(`✅ [終端機自癒回報] 晨報已於第 ${retryCount} 次重試中成功補發！`);
     } else {
-      // 推播邏輯本身回傳失敗（如 LINE Client 未初始化、無 TARGET_ID）
-      throw new Error(result.reason || '推播回傳失敗');
+      console.log(`✅ [晨報背景] 推播完成。`);
     }
+
   } catch (err) {
     console.error(`❌ [晨報背景] 第 ${retryCount} 次執行失敗: ${err.message}`);
 
     if (retryCount < MAX_RETRIES) {
       const nextRetry = retryCount + 1;
       const delayMin = RETRY_DELAY_MS / 60000;
-      console.warn(`⏳ [自癒排程] 將於 ${delayMin} 分鐘後自動觸發第 ${nextRetry} 次補發...`);
+      const warnMsg = `⏳ [自癒排程] 將於 ${delayMin} 分鐘後自動觸發第 ${nextRetry} 次補發...`;
+      console.warn(warnMsg);
+
+      // 【優化三】即時通報總監
+      await notifyAdmin(
+        `🚨 [終端機自癒回報] 晨報發生異常（${err.message}）。\n自癒系統已點火，將於 ${delayMin} 分鐘後進行第 ${nextRetry} 次自動重試。`
+      );
+
+      // 排程重試（isReportingActive 保持 true，防止外部再觸發）
       setTimeout(() => runMorningReportWithRetry(nextRetry), RETRY_DELAY_MS);
+
     } else {
-      console.error(`🚨 [自癒放棄] 已達最大重試上限（${MAX_RETRIES} 次），今日晨報補發終止。請至 Render 日誌手動排查。`);
+      // 已達重試上限，釋放鎖讓明天可以重新觸發
+      isReportingActive = false;
+      const giveUpMsg = `🚨 [自癒放棄] 已達最大重試上限（${MAX_RETRIES} 次），今日晨報補發終止。請至 Render 日誌手動排查。`;
+      console.error(giveUpMsg);
+
+      // 【優化三】通報總監最終放棄
+      await notifyAdmin(
+        `🚨 [終端機自癒放棄] 晨報歷經 ${MAX_RETRIES} 次自動重試仍失敗（最後錯誤：${err.message}）。\n今日自動補發已終止，請手動至 Render 日誌排查根本原因。`
+      );
     }
   }
 }
 
+// ==========================================
+// 外部 Cron 觸發端點 (供 cron-job.org 每日 UTC 00:00 = 台北 08:00 呼叫)
+// GET /api/cron/morning-report
+// 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
+//
+// 架構：Fire-and-Forget + Mutex 鎖 + Self-Healing 自癒重試狀態機
+//   1. 收到請求 → 立刻回傳 { success: true, msg: 'OK' }（< 1ms）
+//   2. Mutex 鎖防並發雙胞胎觸發
+//   3. 背景執行週末差別化晨報；失敗最多重試 3 次 × 5 分鐘
+// ==========================================
 app.get('/api/cron/morning-report', (req, res) => {
   const triggerTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   console.log(`🌅 [晨報端點] 收到外部 Cron 請求，台北時間: ${triggerTime}`);
 
-  // 【步驟 1】立刻秒回極輕量 JSON，確保 cron-job.org 不超時、不輸出過大
+  // 【優化一】Mutex 鎖：若已有任務執行中，立刻秒回並中斷，防雙胞胎推播
+  if (isReportingActive) {
+    console.warn(`🔐 [Mutex 鎖] 已有晨報任務執行中，忽略本次重複觸發。`);
+    return res.status(200).json({ success: true, msg: 'ALREADY_RUNNING' });
+  }
+
+  // 鎖定 Mutex
+  isReportingActive = true;
+
+  // 立刻秒回極輕量 JSON，確保 cron-job.org 不超時、不輸出過大
   res.status(200).json({ success: true, msg: 'OK' });
 
-  // 【步驟 2】推入背景執行（setImmediate 確保 response 先發出），啟動自癒狀態機
+  // 推入背景執行（setImmediate 確保 response 先發出），啟動自癒狀態機
   setImmediate(() => runMorningReportWithRetry(0));
 });
 
