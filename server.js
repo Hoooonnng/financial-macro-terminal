@@ -2258,32 +2258,130 @@ async function runMorningReportWithRetry(retryCount = 0) {
 // ==========================================
 // 外部 Cron 觸發端點 (供 cron-job.org 每日 UTC 00:00 = 台北 08:00 呼叫)
 // GET /api/cron/morning-report
-// 設定網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
+// 網址：https://financial-macro-terminal.onrender.com/api/cron/morning-report
 //
-// 架構：Fire-and-Forget + Mutex 鎖 + Self-Healing 自癒重試狀態機
-//   1. 收到請求 → 立刻回傳 { success: true, msg: 'OK' }（< 1ms）
-//   2. Mutex 鎖防並發雙胞胎觸發
-//   3. 背景執行週末差別化晨報；失敗最多重試 3 次 × 5 分鐘
+// 【根治方案】架構：強隔離非同步 + Connection:close 強制斷開 TCP
+//   ★ 32秒問題根本原因：HTTP/1.1 Keep-Alive 讓 TCP 連線保持開啟直到背景工作結束
+//   ★ 修復：回傳前強制設定 Connection: close，讓客戶端收到回應後立即釋放 TCP 連線
+//   ★ 效果：cron-job.org 收到 200 OK 後立刻計為成功，不再等待 TCP 關閉
 // ==========================================
 app.get('/api/cron/morning-report', (req, res) => {
   const triggerTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   console.log(`🌅 [晨報端點] 收到外部 Cron 請求，台北時間: ${triggerTime}`);
 
-  // 【優化一】Mutex 鎖：若已有任務執行中，立刻秒回並中斷，防雙胞胎推播
+  // Mutex 鎖：若已有任務執行中，立刻秒回並中斷，防雙胞胎推播
   if (isReportingActive) {
     console.warn(`🔐 [Mutex 鎖] 已有晨報任務執行中，忽略本次重複觸發。`);
+    res.set('Connection', 'close');
     return res.status(200).json({ success: true, msg: 'ALREADY_RUNNING' });
   }
 
   // 鎖定 Mutex
   isReportingActive = true;
 
-  // 立刻秒回極輕量 JSON，確保 cron-job.org 不超時、不輸出過大
-  res.status(200).json({ success: true, msg: 'OK' });
+  // ★★★ 關鍵修復：強制設定 Connection: close ★★★
+  // 讓 HTTP 客戶端（cron-job.org）在收到本 Response 後立即關閉 TCP 連線
+  // 而不是等到 Keep-Alive 超時或背景工作結束，徹底根治 32 秒計時問題
+  res.set('Connection', 'close');
+  res.status(200).json({ success: true, msg: 'Triggered' });
 
-  // 推入背景執行（setImmediate 確保 response 先發出），啟動自癒狀態機
-  setImmediate(() => runMorningReportWithRetry(0));
+  // 所有核心大邏輯完全移入 setImmediate，確保 response 已發出後才開始執行
+  // 使用立即執行非同步函數（async IIFE），包含完整的週末/工作日邏輯與風控
+  setImmediate(async () => {
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+
+    // 今日成功鎖：已成功發出則全面跳過（防重複推播）
+    if (cronLastSuccessDate === todayStr) {
+      console.log(`🔒 [背景晨報] 今日晨報已成功發出（${todayStr}），跳過。`);
+      isReportingActive = false;
+      return;
+    }
+
+    // 定義本次推播任務的遞迴重試執行器
+    async function attemptReport(retryCount) {
+      const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
+
+      try {
+        if (retryCount > 0) {
+          console.warn(`⚠️ [自癒系統點火] 晨報發送失敗，正在進行第 ${retryCount} 次非同步自動補發...`);
+        } else {
+          console.log(`⚙️ [背景晨報] 開始執行數據抓取與 LINE 推播...`);
+        }
+
+        // 防空：lineClient 與 targetId 必須存在
+        if (!lineClient) throw new Error('LINE client not initialized');
+        if (!targetId) throw new Error('No target LINE ID configured (LINE_USER_ID / LINE_GROUP_ID)');
+
+        // 時區檢查 → 週末 / 工作日差別化報告生成
+        const reportText = await generateSmartReportText();
+
+        // 防空：若 report 為空或 null，補一句預設文字
+        const finalText = (reportText && reportText.trim().length > 0)
+          ? reportText
+          : '本日無重大高衝擊總經事件。';
+
+        await lineClient.pushMessage(targetId, { type: 'text', text: finalText });
+
+        // 成功：鎖定今日、釋放 Mutex
+        cronLastSuccessDate = todayStr;
+        isReportingActive = false;
+        if (retryCount > 0) {
+          console.log(`✅ [自癒成功] 晨報已於第 ${retryCount} 次重試中順利補發完畢。`);
+          if (targetId) {
+            try {
+              await lineClient.pushMessage(targetId, {
+                type: 'text',
+                text: `✅ [終端機自癒回報] 晨報已於第 ${retryCount} 次重試中成功補發！`
+              });
+            } catch (_) {}
+          }
+        } else {
+          console.log(`✅ [背景晨報] 推播完成。`);
+        }
+
+      } catch (error) {
+        console.error(`❌ [背景晨報] 第 ${retryCount} 次執行失敗: ${error.message}`);
+
+        // 風控回報：每次失敗立刻 pushMessage 給 LINE_USER_ID
+        if (lineClient && targetId) {
+          try {
+            if (retryCount < MAX_RETRIES) {
+              const delayMin = RETRY_DELAY_MS / 60000;
+              await lineClient.pushMessage(targetId, {
+                type: 'text',
+                text: `🚨 [終端機自癒回報] 晨報發生異常（${error.message}）。\n自癒系統已點火，將於 ${delayMin} 分鐘後進行第 ${retryCount + 1} 次自動重試。`
+              });
+            } else {
+              await lineClient.pushMessage(targetId, {
+                type: 'text',
+                text: `🚨 [終端機自癒放棄] 晨報歷經 ${MAX_RETRIES} 次自動重試仍失敗（最後錯誤：${error.message}）。\n今日自動補發已終止，請手動至 Render 日誌排查根本原因。`
+              });
+            }
+          } catch (notifyErr) {
+            console.error('❌ [風控回報] 推送失敗通知錯誤:', notifyErr.message);
+          }
+        }
+
+        // 排程重試或放棄
+        if (retryCount < MAX_RETRIES) {
+          const nextRetry = retryCount + 1;
+          const delayMin = RETRY_DELAY_MS / 60000;
+          console.warn(`⏳ [自癒排程] 將於 ${delayMin} 分鐘後自動觸發第 ${nextRetry} 次補發...`);
+          // isReportingActive 保持 true，阻止外部重複觸發
+          setTimeout(() => attemptReport(nextRetry), RETRY_DELAY_MS);
+        } else {
+          // 達到重試上限，釋放鎖讓明天可以重新觸發
+          isReportingActive = false;
+          console.error(`🚨 [自癒放棄] 已達最大重試上限（${MAX_RETRIES} 次），今日晨報補發終止。`);
+        }
+      }
+    }
+
+    // 啟動第 0 次嘗試
+    await attemptReport(0);
+  });
 });
+
 
 
 
