@@ -38,7 +38,9 @@ class SidebarComponent {
     this.watchlistContainer = document.getElementById('watchlist-cards-container');
     this.watchlistCountBadge = document.getElementById('watchlist-count-badge');
 
-    this.baseDate = new Date('2026-06-15T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    this.baseDate = today;
     this.timelineEvents = [];
 
     // 讀取/設定 SMC 與經典圖層顯示狀態 (LocalStorage)
@@ -87,10 +89,11 @@ class SidebarComponent {
   }
 
   async fetchTimelineEvents() {
-    const fromStr = "2026-06-15T00:00:00Z";
-    const toStr = "2026-07-15T23:59:59Z";
+    const fromStr = this.baseDate.toISOString();
+    const thirtyDaysLater = new Date(this.baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const toStr = thirtyDaysLater.toISOString();
     try {
-      const res = await fetch(`/api/economic-calendar?from=${fromStr}&to=${toStr}`);
+      const res = await fetch(`/api/economic-calendar?from=${encodeURIComponent(fromStr)}&to=${encodeURIComponent(toStr)}`);
       this.timelineEvents = await res.json();
     } catch (err) {
       console.error("Failed to fetch timeline macro events:", err);
@@ -235,7 +238,7 @@ class SidebarComponent {
 
         const actClass = getCompareClass(event.actual, event.consensus, event.compareType);
         const actText = event.actual || '--';
-        valDiv.innerHTML = `預測: ${event.consensus} | 實際: <span class="${actClass}">${actText}</span> | 前值: ${event.previous}`;
+        valDiv.innerHTML = `預測: ${event.consensus} | 實際: <span class="${actClass}">${actText}</span> | 前值: ${event.previous}${event.is_revised ? ' <span class="revision-tag">⚠️修正</span>' : ''}`;
         content.appendChild(valDiv);
       }
 

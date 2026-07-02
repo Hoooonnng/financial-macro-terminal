@@ -271,6 +271,20 @@ body {
   color: var(--text-primary) !important;
 }
 
+/* ★ 前值修正 (Revision) 標記樣式 */
+.val-revised {
+  position: relative;
+  color: #f59e0b !important;
+}
+
+.revision-tag {
+  font-size: 0.7em;
+  color: #f59e0b;
+  font-weight: 500;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
 .calendar-header {
   display: flex;
   justify-content: space-between;

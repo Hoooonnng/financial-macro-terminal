@@ -41,7 +41,7 @@ function getCompareType(title, indicator) {
   const t = (title || "").toLowerCase();
   const ind = (indicator || "").toLowerCase();
   
-  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("employment change") || t.includes("非農") || ind.includes("non farm") || ind.includes("nfp")) {
+  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm") || t.includes("employment change") || t.includes("非農") || ind.includes("non farm") || ind.includes("nfp")) {
     return "higher-better";
   }
   if (t.includes("cpi") || t.includes("consumer price") || t.includes("消費者物價") || t.includes("通膨") || ind.includes("cpi") || ind.includes("inflation rate")) {
@@ -260,12 +260,27 @@ const translationDictionary = [
     desc: "衡量私營企業在過去一個月內所創造的就業崗位變動，排除政府部門的就業人口。" 
   },
   { 
+    key: "non farm payrolls private", 
+    title: "私營部門非農就業人口", 
+    desc: "衡量私營企業在過去一個月內所創造的就業崗位變動，排除政府部門的就業人口。" 
+  },
+  { 
+    key: "private non farm payrolls", 
+    title: "私營部門非農就業人口", 
+    desc: "衡量私營企業在過去一個月內所創造的就業崗位變動，排除政府部門的就業人口。" 
+  },
+  { 
     key: "nonfarm payrolls", 
     title: "非農就業人口數據 (NFP)", 
     desc: "美國非農就業人數及失業率，評估勞動力市場健康度與聯準會政策走向的最重要指標之一。" 
   },
   { 
     key: "non-farm payrolls", 
+    title: "非農就業人口數據 (NFP)", 
+    desc: "美國非農就業人數及失業率，評估勞動力市場健康度與聯準會政策走向的最重要指標之一。" 
+  },
+  { 
+    key: "non farm payrolls", 
     title: "非農就業人口數據 (NFP)", 
     desc: "美國非農就業人數及失業率，評估勞動力市場健康度與聯準會政策走向的最重要指標之一。" 
   },
@@ -627,7 +642,11 @@ function translateEvent(e) {
   const lowTitle = title.toLowerCase();
   
   // 1. 優先匹配手動定義的精確詞典
-  for (const item of translationDictionary) {
+  // ★ 修復：按 key 長度降序排列，防止短 key（如 "nonfarm payrolls"）
+  //   吞噬長 key（如 "nonfarm payrolls private"）的 includes() 誤匹配
+  //   確保 "Private Nonfarm Payrolls" 等語序變體優先命中更具體的 key
+  const sortedDict = [...translationDictionary].sort((a, b) => b.key.length - a.key.length);
+  for (const item of sortedDict) {
     if (lowTitle.includes(item.key)) {
       return {
         title: item.title,
@@ -990,12 +1009,14 @@ function generateMockMacroEvents(year, month) {
 function getStrictImportance(title, indicator) {
   const t = ((title || "") + " " + (indicator || "")).toLowerCase();
   
+  // ★ 修復：私營非農降級為 importance=2，不應與總體非農同級搶佔重磅版面
+  const isPrivateNFP = t.includes("private") || t.includes("私營") || t.includes("私人");
+  
   const isHigh =
     t.includes("fomc") ||
     t.includes("cpi") ||
     t.includes("consumer price") ||
-    t.includes("nonfarm") ||
-    t.includes("non-farm") ||
+    ((t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm")) && !isPrivateNFP) ||
     t.includes("unemployment");
     
   if (isHigh) return 3;
@@ -1004,7 +1025,8 @@ function getStrictImportance(title, indicator) {
     t.includes("gdp") ||
     t.includes("pmi") ||
     t.includes("retail sales") ||
-    t.includes("retail sale");
+    t.includes("retail sale") ||
+    ((t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm")) && isPrivateNFP);
     
   if (isMedium) return 2;
   
@@ -1066,7 +1088,7 @@ function getEventFamily(title) {
   }
   
   // Nonfarm Family (Distinguish standard headline from private NFP)
-  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農")) {
+  if (t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm") || t.includes("非農")) {
     if (t.includes("private") || t.includes("私營") || t.includes("私人")) return "nonfarm-private";
     return "nonfarm-headline";
   }
@@ -1574,6 +1596,9 @@ function processRawEvents(tvResult) {
       consensus: formatValue(e.forecast, e.scale, e.unit),
       actual: formatValue(e.actual, e.scale, e.unit),
       previous: formatValue(e.previous, e.scale, e.unit),
+      // ★ 新增 Revision 偵測欄位（預設值，後續由 Phase 5 填入）
+      is_revised: false,
+      original_previous: null,
       compareType: getCompareType(e.title, e.indicator),
       description: translated.description,
       importance: getStrictImportance(e.title, e.indicator)
@@ -1586,6 +1611,7 @@ function processRawEvents(tvResult) {
     const tLower = (item.title || "").toLowerCase().trim();
     
     // 白名單防禦線：如果事件名稱完全等於 "CPI" 或 "消費者物價指數"、"非農就業人口"、"聯準會利率決策"，不論如何都絕對不允許被 filter 剔除
+    // ★ 修復：白名單排除私營非農，防止「私營部門非農就業人口」因包含「非農就業人口」子字串而被錯誤保護
     const isWhitelisted = (
       tLower === "cpi" ||
       tLower === "消費者物價指數" ||
@@ -1596,7 +1622,8 @@ function processRawEvents(tvResult) {
       tLower === "聯準會利率決策 (fomc)" ||
       tLower.includes("非農就業人口") ||
       tLower.includes("聯準會利率決策")
-    ) && !(tLower.includes("s.a") || tLower.includes("季調") || tLower.includes("調整") || tLower.includes("adjusted"));
+    ) && !(tLower.includes("私營") || tLower.includes("private") || tLower.includes("私人"))
+      && !(tLower.includes("s.a") || tLower.includes("季調") || tLower.includes("調整") || tLower.includes("adjusted"));
 
     const dupIndex = finalResult.findIndex(fi => isDuplicateEvent(fi, item));
     
@@ -1604,17 +1631,19 @@ function processRawEvents(tvResult) {
       const existingItem = finalResult[dupIndex];
       
       // 白名單優先級邏輯
+      // ★ 修復：白名單排除私營非農
+      const existingTLower = (existingItem.title || "").toLowerCase().trim();
       const existingWhitelisted = (
-        (existingItem.title || "").toLowerCase().trim() === "cpi" ||
-        (existingItem.title || "").toLowerCase().trim() === "消費者物價指數" ||
-        (existingItem.title || "").toLowerCase().trim() === "消費者物價指數 (cpi)" ||
-        (existingItem.title || "").toLowerCase().trim() === "非農就業人口" ||
-        (existingItem.title || "").toLowerCase().trim() === "非農就業人口數據 (nfp)" ||
-        (existingItem.title || "").toLowerCase().trim() === "聯準會利率決策" ||
-        (existingItem.title || "").toLowerCase().trim() === "聯準會利率決策 (fomc)" ||
-        (existingItem.title || "").toLowerCase().includes("非農就業人口") ||
-        (existingItem.title || "").toLowerCase().includes("聯準會利率決策")
-      );
+        existingTLower === "cpi" ||
+        existingTLower === "消費者物價指數" ||
+        existingTLower === "消費者物價指數 (cpi)" ||
+        existingTLower === "非農就業人口" ||
+        existingTLower === "非農就業人口數據 (nfp)" ||
+        existingTLower === "聯準會利率決策" ||
+        existingTLower === "聯準會利率決策 (fomc)" ||
+        existingTLower.includes("非農就業人口") ||
+        existingTLower.includes("聯準會利率決策")
+      ) && !(existingTLower.includes("私營") || existingTLower.includes("private") || existingTLower.includes("私人"));
       
       if (isWhitelisted && !existingWhitelisted) {
         // 新項目是主體白名單，直接覆蓋舊的非白名單重複項 (例如 CPI 覆蓋 CPI s.a)
@@ -1635,8 +1664,40 @@ function processRawEvents(tvResult) {
     }
   }
 
+  // ★ Phase 5: 前值修正 (Revision) 偵測
+  // 當 BLS 官方修正前月數據時（例如 NFP 前值 120K → 97K），TradingView API
+  // 會直接更新 previous 欄位。此機制比對快取中的舊前值，偵測並標記修正。
+  for (const event of finalResult) {
+    const cacheKey = event.id;
+    const currentPrevious = event.previous || "";
+    
+    if (currentPrevious === "") continue;
+    
+    const cached = previousValueCache[cacheKey];
+    if (cached) {
+      // 比對：如果新前值與快取的舊前值不一致，標記為修正
+      if (cached.previous !== currentPrevious) {
+        event.is_revised = true;
+        event.original_previous = cached.previous;
+        // 更新快取為最新值
+        cached.previous = currentPrevious;
+        cached.timestamp = Date.now();
+      }
+    } else {
+      // 首次見到此事件，寫入快取
+      previousValueCache[cacheKey] = {
+        previous: currentPrevious,
+        timestamp: Date.now()
+      };
+    }
+  }
+
   return finalResult;
 }
+
+// ★ 前值修正 (Revision) 偵測快取
+// key: 事件唯一 ID (macro-tv-{id}), value: { previous: "120K", timestamp: Date.now() }
+const previousValueCache = {};
 
 const economicCalendarCache = {};
 const ECONOMIC_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
@@ -2272,8 +2333,11 @@ app.get('/api/cron/morning-report', (req, res) => {
   // Mutex 鎖：若已有任務執行中，立刻秒回並中斷，防雙胞胎推播
   if (isReportingActive) {
     console.warn(`🔐 [Mutex 鎖] 已有晨報任務執行中，忽略本次重複觸發。`);
+    const body = JSON.stringify({ success: true });
     res.set('Connection', 'close');
-    return res.status(200).json({ success: true, msg: 'ALREADY_RUNNING' });
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Content-Length', Buffer.byteLength(body));
+    return res.status(200).end(body);
   }
 
   // 鎖定 Mutex
@@ -2282,8 +2346,12 @@ app.get('/api/cron/morning-report', (req, res) => {
   // ★★★ 關鍵修復：強制設定 Connection: close ★★★
   // 讓 HTTP 客戶端（cron-job.org）在收到本 Response 後立即關閉 TCP 連線
   // 而不是等到 Keep-Alive 超時或背景工作結束，徹底根治 32 秒計時問題
+  // Content-Length 明確告知客戶端 body 長度，防止「輸出過大」誤報
+  const responseBody = JSON.stringify({ success: true });
   res.set('Connection', 'close');
-  res.status(200).json({ success: true, msg: 'Triggered' });
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.set('Content-Length', Buffer.byteLength(responseBody));
+  res.status(200).end(responseBody);
 
   // 所有核心大邏輯完全移入 setImmediate，確保 response 已發出後才開始執行
   // 使用立即執行非同步函數（async IIFE），包含完整的週末/工作日邏輯與風控
@@ -2452,7 +2520,7 @@ async function sendLiveDataFlash(event) {
         deviationText = ` (偏差: ${sign}${diff}${unit})`;
         
         const isInflation = t.includes("cpi") || t.includes("pce") || t.includes("消費者物價指數") || t.includes("個人消費支出") || t.includes("inflation") || t.includes("通膨");
-        const isEconomy = t.includes("nonfarm") || t.includes("non-farm") || t.includes("非農") || t.includes("gdp") || t.includes("國內生產總值") || t.includes("retail sales") || t.includes("零售銷售");
+        const isEconomy = t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm") || t.includes("非農") || t.includes("gdp") || t.includes("國內生產總值") || t.includes("retail sales") || t.includes("零售銷售");
         
         if (Math.abs(diff) < 0.001) {
           tag = "[符合預期 ⚪]";
@@ -2477,7 +2545,12 @@ async function sendLiveDataFlash(event) {
     text += `判斷：${tag}\n`;
     text += `實際值：${event.actual}${deviationText}\n`;
     text += `預測值：${event.consensus || '無'}\n`;
-    text += `前值：${event.previous || '無'}\n`;
+    // ★ 前值修正 (Revision) 標記
+    if (event.is_revised && event.original_previous) {
+      text += `前值：${event.previous} ⚠️(前值修正，原為 ${event.original_previous})\n`;
+    } else {
+      text += `前值：${event.previous || '無'}\n`;
+    }
     text += `===================`;
     
     await lineClient.pushMessage(targetId, {

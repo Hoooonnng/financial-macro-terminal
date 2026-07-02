@@ -23,9 +23,10 @@ class CalendarComponent {
     this.store = store;
     this.callbacks = callbacks;
     
-    this.year = 2026;
-    this.month = 6;
-    this.selectedDate = null;
+    const now = new Date();
+    this.year = now.getFullYear();
+    this.month = now.getMonth() + 1;
+    this.selectedDate = formatDateStr(this.year, this.month, now.getDate());
     this.viewMode = 'grid';
     this.macroEvents = [];
 
@@ -439,8 +440,8 @@ class CalendarComponent {
             <span class="data-field-value">${event.consensus}</span>
           </div>
           <div class="data-field">
-            <span class="data-field-label">前值</span>
-            <span class="data-field-value">${event.previous}</span>
+            <span class="data-field-label">前值${event.is_revised ? ' ⚠️' : ''}</span>
+            <span class="data-field-value ${event.is_revised ? 'val-revised' : ''}">${event.previous}${event.is_revised && event.original_previous ? ' <span class="revision-tag">(前值修正，原為 ' + event.original_previous + ')</span>' : ''}</span>
           </div>
         `;
         item.appendChild(grid);
@@ -527,7 +528,7 @@ class CalendarComponent {
         dataBadge.className = 'list-event-data';
         const actualClass = getCompareClass(event.actual, event.consensus, event.compareType);
         const actualVal = event.actual || '--';
-        dataBadge.innerHTML = `預測: ${event.consensus} | <span class="${actualClass}">實際: ${actualVal}</span> | 前值: ${event.previous}`;
+        dataBadge.innerHTML = `預測: ${event.consensus} | <span class="${actualClass}">實際: ${actualVal}</span> | 前值: ${event.previous}${event.is_revised ? ' <span class="revision-tag">⚠️修正</span>' : ''}`;
         row.appendChild(dataBadge);
       }
 
@@ -613,8 +614,8 @@ class CalendarComponent {
           <span class="modal-field-value">${event.consensus}</span>
         </div>
         <div class="modal-data-field">
-          <span class="modal-field-label">前值</span>
-          <span class="modal-field-value">${event.previous}</span>
+          <span class="modal-field-label">前值${event.is_revised ? ' ⚠️' : ''}</span>
+          <span class="modal-field-value ${event.is_revised ? 'val-revised' : ''}">${event.previous}${event.is_revised && event.original_previous ? ' <span class="revision-tag">(前值修正，原為 ' + event.original_previous + ')</span>' : ''}</span>
         </div>
       `;
       body.appendChild(dataGrid);
