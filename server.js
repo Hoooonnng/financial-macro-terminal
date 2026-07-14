@@ -1029,6 +1029,8 @@ function getStrictImportance(title, indicator) {
     t.includes("fomc") ||
     t.includes("cpi") ||
     t.includes("consumer price") ||
+    t.includes("inflation rate") ||
+    t.includes("通膨率") ||
     ((t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm")) && !isPrivateNFP) ||
     t.includes("unemployment");
     
@@ -1039,6 +1041,8 @@ function getStrictImportance(title, indicator) {
     t.includes("pmi") ||
     t.includes("retail sales") ||
     t.includes("retail sale") ||
+    t.includes("pce") ||
+    t.includes("ppi") ||
     ((t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm")) && isPrivateNFP);
     
   if (isMedium) return 2;
