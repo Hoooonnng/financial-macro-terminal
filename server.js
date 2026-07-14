@@ -648,8 +648,16 @@ function translateEvent(e) {
   const sortedDict = [...translationDictionary].sort((a, b) => b.key.length - a.key.length);
   for (const item of sortedDict) {
     if (lowTitle.includes(item.key)) {
+      let finalTitle = item.title;
+      if (lowTitle.includes("yoy") && !item.key.includes("yoy")) {
+        finalTitle += " (年增率)";
+      } else if (lowTitle.includes("mom") && !item.key.includes("mom")) {
+        finalTitle += " (月增率)";
+      } else if (lowTitle.includes("qoq") && !item.key.includes("qoq")) {
+        finalTitle += " (季增率)";
+      }
       return {
-        title: item.title,
+        title: finalTitle,
         description: item.desc
       };
     }
@@ -832,7 +840,7 @@ function translateEvent(e) {
 }
 
 // 格式化數值，拼接 scale (如 K, M) 與 unit (如 %)
-function formatValue(val, scale, unit) {
+function formatValue(val, scale, unit, title = "") {
   if (val === null || val === undefined) return '';
   let str = val.toString();
   if (scale) {
@@ -840,6 +848,11 @@ function formatValue(val, scale, unit) {
   }
   if (unit) {
     str += unit;
+  } else if (title && (title.includes("率") || title.includes("YoY") || title.includes("MoM") || title.includes("同比") || title.includes("環比"))) {
+    // 確保前端渲染時，如果是百分比數據，加上 % 符號
+    if (!str.includes("%") && !isNaN(parseFloat(str))) {
+      str += "%";
+    }
   }
   return str;
 }
@@ -1534,6 +1547,21 @@ function processRawEvents(tvResult) {
       return t.includes("powell");
     }
     
+    // 剔除通膨原始絕對值 (Raw Index Level)：CPI, PPI, PCE 等通膨指數，必須帶有 YoY 或 MoM，否則視為絕對值並剔除
+    const isInflation = t.includes("cpi") || t.includes("ppi") || t.includes("pce") || 
+                        t.includes("consumer price") || t.includes("producer price") || 
+                        t.includes("personal consumption");
+    
+    if (isInflation) {
+      const hasRate = t.includes("yoy") || t.includes("mom") || t.includes("qoq") || 
+                      t.includes("year") || t.includes("month") || t.includes("quarter") ||
+                      t.includes("y/y") || t.includes("m/m") || t.includes("q/q") ||
+                      t.includes("annual") || t.includes("rate");
+      if (!hasRate) {
+        return false; // 剔除沒有變化率特徵的通膨事件（即絕對指數）
+      }
+    }
+
     const blacklist = ['auction', 'note', 'bill', 'bond', 'redbook', 'mortgage', 'rig count'];
     for (const keyword of blacklist) {
       if (t.includes(keyword)) {
@@ -1542,6 +1570,24 @@ function processRawEvents(tvResult) {
     }
     return true;
   });
+
+  // 1.5 預處理：將 indicator (如 YoY, MoM) 併入 title，防止不同指標的同名事件被錯誤去重
+  for (const e of filteredResult) {
+    if (e.indicator) {
+      const ind = e.indicator.toLowerCase();
+      const tit = (e.title || "").toLowerCase();
+      if ((ind.includes("yoy") || ind.includes("mom") || ind.includes("qoq") || ind.includes("y/y") || ind.includes("m/m") || ind.includes("q/q")) && !tit.includes("yoy") && !tit.includes("mom") && !tit.includes("qoq")) {
+        let suffix = "";
+        if (ind.includes("yoy") || ind.includes("y/y")) suffix = "YoY";
+        else if (ind.includes("mom") || ind.includes("m/m")) suffix = "MoM";
+        else if (ind.includes("qoq") || ind.includes("q/q")) suffix = "QoQ";
+        
+        if (suffix) {
+           e.title = `${e.title} ${suffix}`;
+        }
+      }
+    }
+  }
 
   // 2. 第一階段：同時間英文標題相似去重
   const uniqueResult = [];
@@ -1593,9 +1639,9 @@ function processRawEvents(tvResult) {
       type: "macro",
       date: dateStr,
       time: timeStr,
-      consensus: formatValue(e.forecast, e.scale, e.unit),
-      actual: formatValue(e.actual, e.scale, e.unit),
-      previous: formatValue(e.previous, e.scale, e.unit),
+      consensus: formatValue(e.forecast, e.scale, e.unit, translated.title),
+      actual: formatValue(e.actual, e.scale, e.unit, translated.title),
+      previous: formatValue(e.previous, e.scale, e.unit, translated.title),
       // ★ 新增 Revision 偵測欄位（預設值，後續由 Phase 5 填入）
       is_revised: false,
       original_previous: null,
