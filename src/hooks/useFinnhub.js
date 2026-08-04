@@ -88,8 +88,22 @@ class FinnhubStore {
 
   // 初始化並啟動後端靜默中轉數據的輪詢
   async init() {
+    this.syncWatchlistToServer();
     await this.fetchWatchlistData();
     this.startPolling();
+  }
+
+  async syncWatchlistToServer() {
+    if (this.tickers.length === 0) return;
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ watchlist: this.tickers })
+      });
+    } catch (err) {
+      console.warn("Failed to sync watchlist to server", err);
+    }
   }
 
   async fetchWatchlistData() {
@@ -165,6 +179,7 @@ class FinnhubStore {
 
     this.tickers.unshift(symbol);
     this.saveTickers();
+    this.syncWatchlistToServer();
 
     const fallback = window.getFallbackProfile(symbol);
     this.stocks[symbol] = {
@@ -189,6 +204,7 @@ class FinnhubStore {
     const symbol = ticker.toUpperCase();
     this.tickers = this.tickers.filter(t => t !== symbol);
     this.saveTickers();
+    this.syncWatchlistToServer();
     
     delete this.stocks[symbol];
     delete this.earnings[symbol];

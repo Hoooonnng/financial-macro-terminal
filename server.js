@@ -1241,10 +1241,14 @@ async function getRealEarningsDate(ticker) {
 
 // 行情快取與訂閱列表 (集中式集中快取系統，完全杜絕多用戶連線消耗 API 額度)
 const globalStockCache = {};
+global.dynamicWatchlist = [];
+const CORE_TICKERS = ['TSLA', 'NVDA', 'AAPL', 'MSFT', 'META'];
+
 const activeTickers = new Set([
-  "TSLA", "TSLL", "SPCX", "OUST", "SOFI", 
-  "GRAB", "CRCL", "NVDA", "GOOG", "MSFT", 
-  "AAPL", "ONDS", "SNOW", "AMZN", "COHR", 
+  ...CORE_TICKERS,
+  "TSLL", "SPCX", "OUST", "SOFI", 
+  "GRAB", "CRCL", "GOOG", 
+  "ONDS", "SNOW", "AMZN", "COHR", 
   "AAOI", "LAC", "MP", "ORCL", "USAR"
 ]);
 
@@ -1475,6 +1479,19 @@ app.get('/api/watchlist', (req, res) => {
 // API Endpoint - 集中式股票數據快取回傳 (無條件直接回傳 globalStockCache)
 app.get('/api/stocks', (req, res) => {
   res.json(globalStockCache);
+});
+
+// API Endpoint - 接收前端同步的最新自選清單
+app.post('/api/watchlist', express.json(), (req, res) => {
+  const { watchlist } = req.body;
+  if (Array.isArray(watchlist)) {
+    global.dynamicWatchlist = watchlist;
+    // 將前端傳來的新股票加入背景輪詢清單中
+    watchlist.forEach(t => activeTickers.add(t.toUpperCase()));
+    res.json({ success: true, watchlist: global.dynamicWatchlist });
+  } else {
+    res.status(400).json({ success: false, message: 'Invalid watchlist format' });
+  }
 });
 
 // ==========================================
@@ -2222,6 +2239,24 @@ async function generateDailyReportText() {
       reportText += `   📉 前值: ${e.previous || '無'}\n\n`;
     });
   }
+
+  // 附加今日財報預告
+  const targetTickers = (global.dynamicWatchlist && global.dynamicWatchlist.length > 0) 
+    ? global.dynamicWatchlist 
+    : CORE_TICKERS;
+
+  let earningsText = "";
+  for (const ticker of targetTickers) {
+    const cached = globalStockCache[ticker.toUpperCase()];
+    if (cached && cached.earningsDate === taipeiTodayStr) {
+      earningsText += `   📈 ${ticker.toUpperCase()} 財報發布\n`;
+    }
+  }
+
+  if (earningsText) {
+    reportText += `\n🎯 【今日重點財報預告】\n${earningsText}`;
+  }
+
   return reportText.trim();
 }
 
