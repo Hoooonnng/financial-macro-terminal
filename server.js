@@ -5,30 +5,9 @@
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
-const fs = require('fs');
 
-// 手動載入 .env 檔案配置 (零相依性，相容所有環境)
-try {
-  const envPath = path.join(__dirname, '.env');
-  if (fs.existsSync(envPath)) {
-    const envData = fs.readFileSync(envPath, 'utf8');
-    envData.split(/\r?\n/).forEach(line => {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('#')) {
-        const index = trimmed.indexOf('=');
-        if (index > 0) {
-          const key = trimmed.substring(0, index).trim();
-          const val = trimmed.substring(index + 1).trim();
-          if (key && !process.env[key]) {
-            process.env[key] = val;
-          }
-        }
-      }
-    });
-  }
-} catch (err) {
-  // 靜默容錯
-}
+// 【2026-10-17】改用 dotenv 載入 .env（取代手寫解析器）；無 .env 時靜默跳過
+try { require('dotenv').config(); } catch (err) { /* 靜默容錯 */ }
 
 const app = express();
 const PORT = 3000;
@@ -1377,23 +1356,16 @@ for (const ticker of activeTickers) {
   updateFvgMitigation(ticker, prof.price);
 }
 
-// 股價跳動模擬輔助
-function simulateStockTick(ticker) {
-  const cached = globalStockCache[ticker];
-  if (!cached) return;
-  
-  const pctChange = (Math.random() * 0.4 - 0.2) / 100; // -0.2% ~ +0.2%
-  const oldPrice = cached.price;
-  const newPrice = parseFloat((oldPrice * (1 + pctChange)).toFixed(2));
-  
-  const baseProfile = getFallbackProfile(ticker);
-  const totalChange = parseFloat((newPrice - baseProfile.price).toFixed(2));
-  const totalPct = parseFloat((totalChange / baseProfile.price * 100).toFixed(2));
-  
-  cached.price = newPrice;
-  cached.change = totalChange;
-  cached.pct = totalPct;
-  updateFvgMitigation(ticker, newPrice);
+// 【2026-10-17 已移除】simulateStockTick 偽造隨機股價跳動已刪除，
+// 改用 markStale() 誠實標示過期。保留此註解防止有人加回來。
+
+// 【2026-10-17】報價失敗時保留最後已知價格並標示過期，不再偽造隨機跳動
+// （誠實降級：寧可顯示「延遲」也不顯示假價格）
+function markStale(ticker) {
+  const cached = globalStockCache[ticker] || {};
+  cached.stale = true;
+  cached.staleSince = cached.staleSince || Date.now();
+  globalStockCache[ticker] = cached;
 }
 
 // 背景輪詢定時任務 (集中式背景查詢，不依賴任何用戶的前端請求，每 60 秒統一撈取所有 active 股票數據)
@@ -1401,7 +1373,7 @@ async function pollWatchlistData() {
   const tickersArray = Array.from(activeTickers);
   for (const ticker of tickersArray) {
     if (isSimulating) {
-      simulateStockTick(ticker);
+      markStale(ticker);
       continue;
     }
     
@@ -1419,6 +1391,8 @@ async function pollWatchlistData() {
         cached.change = data.d || 0;
         cached.pct = data.dp || 0;
         cached.earningsDate = earningsDate;
+        cached.stale = false; // 成功取回即清除過期標記
+        cached.staleSince = null;
         const baseProfile = getFallbackProfile(ticker);
         cached.name = baseProfile.name;
         
@@ -1437,7 +1411,7 @@ async function pollWatchlistData() {
         globalStockCache[ticker] = cached;
         updateFvgMitigation(ticker, data.c);
       } else {
-        simulateStockTick(ticker);
+        markStale(ticker); // 無有效報價：標示過期，不偽造
       }
       // 間隔 100ms 避免過快連發 API
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -1449,7 +1423,7 @@ async function pollWatchlistData() {
           isSimulating = false;
         }, 60000);
       }
-      simulateStockTick(ticker);
+      markStale(ticker); // 請求失敗：標示過期，不偽造
     }
   }
 }
@@ -2173,6 +2147,7 @@ async function generateWeeklyReviewText() {
 
   const events = await fetchEconomicEvents(`${weekAgoStr}T00:00:00Z`, `${taipeiTodayStr}T23:59:59Z`);
   const pastHighImpact = events
+    .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
     .filter(e => e.importance === 3 && e.actual && e.actual.toString().trim() !== '')
     .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
 
@@ -2201,6 +2176,7 @@ async function generateWeeklyPreviewText() {
 
   const events = await fetchEconomicEvents(`${taipeiTodayStr}T00:00:00Z`, `${nextWeekStr}T23:59:59Z`);
   const upcoming = events
+    .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
     .filter(e => e.importance === 3)
     .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
 
@@ -2231,6 +2207,7 @@ async function generateDailyReportText() {
 
   const events = await fetchEconomicEvents(windowFromUTC, windowToUTC);
   const highImpactEvents = events
+    .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
     .filter(e => e.importance === 3)
     .filter(e => {
       const eventDatetime = `${e.date}T${e.time || '00:00'}`;
@@ -2254,21 +2231,69 @@ async function generateDailyReportText() {
     });
   }
 
-  // 附加今日財報預告
+  // 附加財報預告（今日＋未來 7 天）
+  // 【2026-10-17】原僅提醒當日財報，現延伸為 7 天預告
   const targetTickers = (global.dynamicWatchlist && global.dynamicWatchlist.length > 0) 
     ? global.dynamicWatchlist 
     : CORE_TICKERS;
 
+  const sevenDaysLaterObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 7));
+  const sevenDaysLaterStr = sevenDaysLaterObj.toISOString().split('T')[0];
+
   let earningsText = "";
+  let upcomingEarningsText = "";
   for (const ticker of targetTickers) {
     const cached = globalStockCache[ticker.toUpperCase()];
-    if (cached && cached.earningsDate === taipeiTodayStr) {
+    if (!cached || !cached.earningsDate) continue;
+    if (cached.earningsDate === taipeiTodayStr) {
       earningsText += `   📈 ${ticker.toUpperCase()} 財報發布\n`;
+    } else if (cached.earningsDate > taipeiTodayStr && cached.earningsDate <= sevenDaysLaterStr) {
+      upcomingEarningsText += `   📅 ${cached.earningsDate} ${ticker.toUpperCase()}\n`;
     }
   }
 
   if (earningsText) {
-    reportText += `\n🎯 【今日重點財報預告】\n${earningsText}`;
+    reportText += `\n\n🎯 【今日重點財報預告】\n${earningsText}`;
+  }
+  if (upcomingEarningsText) {
+    reportText += `\n📅 【未來 7 天財報預告】\n${upcomingEarningsText}`;
+  }
+
+  // 【2026-10-17】昨日回顧：過去 24h 已公布的高衝擊數據（實際 vs 預期）
+  const yesterdayObj = new Date(Date.UTC(tyY, tyM - 1, tyD - 1));
+  const yesterdayStr = yesterdayObj.toISOString().split('T')[0];
+  const yEvents = await fetchEconomicEvents(`${yesterdayStr}T00:00:00Z`, `${taipeiTodayStr}T00:00:00Z`);
+  const yPublished = yEvents
+    .filter(e => !e.isMock)
+    .filter(e => e.importance === 3 && e.actual && String(e.actual).trim() !== '')
+    .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
+  if (yPublished.length > 0) {
+    reportText += `\n\n📊 【昨日數據回顧】\n`;
+    yPublished.forEach((e, idx) => {
+      reportText += `${idx + 1}. 【${e.title}】\n`;
+      reportText += `   ✅ 實際: ${e.actual}　預測: ${e.consensus || '無'}　前值: ${e.previous || '無'}\n`;
+    });
+  }
+
+  // 【2026-10-17】明日前瞻：下一個交易窗口（明日 08:00～後日 08:00）高衝擊預告
+  const dayAfterObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 2));
+  const dayAfterStr = dayAfterObj.toISOString().split('T')[0];
+  const tmrEvents = await fetchEconomicEvents(`${taipeiTomorrowStr}T00:00:00Z`, `${dayAfterStr}T00:00:00Z`);
+  const tmrHigh = tmrEvents
+    .filter(e => !e.isMock)
+    .filter(e => e.importance === 3)
+    .filter(e => {
+      const dt = `${e.date}T${e.time || '00:00'}`;
+      return dt >= `${taipeiTomorrowStr}T08:00` && dt <= `${dayAfterStr}T07:59`;
+    })
+    .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
+  if (tmrHigh.length > 0) {
+    reportText += `\n\n🔮 【明日前瞻預告】\n`;
+    tmrHigh.forEach((e, idx) => {
+      const crossDay = e.date !== taipeiTomorrowStr ? ` (${e.date})` : '';
+      reportText += `${idx + 1}. 【${e.title}】${crossDay} ⏱️ ${e.time}\n`;
+      reportText += `   📊 預測值: ${e.consensus || '無'}　📉 前值: ${e.previous || '無'}\n`;
+    });
   }
 
   return reportText.trim();
@@ -2674,6 +2699,19 @@ async function sendLiveDataFlash(event) {
 }
 // 啟動即時發布檢測
 setInterval(checkLiveEventActuals, 30000);
+
+// 【2026-10-17】健康檢查端點：供 UptimeRobot / 外部看門狗監控服務存活
+// 用法：GET /api/health → { status: 'ok', ... }
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    time: new Date().toISOString(),
+    uptimeSec: Math.floor(process.uptime()),
+    finnhub: !!process.env.FINNHUB_API_KEY,
+    line: !!lineClient,
+    watchlist: activeTickers.size
+  });
+});
 
 app.listen(PORT, () => {
   console.log(`✅ 財經終端機伺服器正在運行: http://localhost:${PORT}`);
