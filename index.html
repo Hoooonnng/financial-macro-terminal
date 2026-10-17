@@ -38,6 +38,12 @@
           <span class="status-indicator"></span>
           <span class="status-text">Finnhub API: 連線中...</span>
         </div>
+        <!-- 【2026-10-17】Finnhub 額度水位計：直觀顯示過去 60 秒 API 用量 -->
+        <div class="quota-meter" id="finnhub-quota" title="過去 60 秒內的 Finnhub API 呼叫次數（免費版上限 60/分鐘）">
+          <span class="quota-label">額度</span>
+          <div class="quota-bar"><div class="quota-fill" id="quota-fill"></div></div>
+          <span class="quota-text" id="quota-text">--/60</span>
+        </div>
       </div>
     </header>
 
