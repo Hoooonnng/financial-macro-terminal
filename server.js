@@ -1015,6 +1015,10 @@ function generateMockMacroEvents(year, month) {
     }
   }
 
+  // 【2026-10-17】Mock 降級誠實標記：所有本地生成的假事件一律標 isMock，
+  // 前端必須顯示「模擬資料」徽章，避免使用者誤當真實行事曆。
+  events.forEach(e => { e.isMock = true; });
+
   return events.sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -1440,14 +1444,9 @@ pollWatchlistData();
 // 背景輪詢定時器 (間隔拉長至 60 秒以減輕 Finnhub API 負載)
 setInterval(pollWatchlistData, 60000);
 
-// 額外的微幅隨機跳動，使 UI 更加靈動
-setInterval(() => {
-  for (const ticker of activeTickers) {
-    if (Math.random() < 0.3) {
-      simulateStockTick(ticker);
-    }
-  }
-}, 5000);
+// 【2026-10-17 移除】刪除每 5 秒隨機跳動：Finnhub 免費本就延遲 60 秒，
+// 再摻入 ±0.2% 隨機假跳動會讓使用者看到既非即時也非真實的價格。
+// 如需「靈動」效果，應標示「延遲報價」而非偽造跳動。
 
 // API Endpoint - 取得美股行情自選看板 (多用戶隔離設計：前端一律只讀取集中快取，不觸發 any 即時 API 呼叫)
 app.get('/api/watchlist', (req, res) => {
