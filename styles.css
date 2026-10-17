@@ -167,6 +167,55 @@ body {
   font-weight: 500;
 }
 
+/* 【2026-10-17】Finnhub 額度水位計 */
+.quota-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  cursor: help;
+}
+.quota-label {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.quota-bar {
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.quota-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: var(--accent-green);
+  transition: width 0.5s ease, background-color 0.5s ease;
+}
+.quota-meter.warn .quota-fill {
+  background: var(--accent-warning);
+}
+.quota-meter.danger .quota-fill {
+  background: var(--accent-red);
+  animation: pulse-glow-warning 2s infinite;
+}
+.quota-text {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  min-width: 3.4em;
+}
+.quota-meter.warn .quota-text {
+  color: var(--accent-warning);
+}
+.quota-meter.danger .quota-text {
+  color: var(--accent-red);
+}
+
 /* Card Styling */
 .card {
   background: var(--bg-card);
@@ -1252,6 +1301,9 @@ body {
     justify-content: center;
   }
   .api-status-badge {
+    align-self: center;
+  }
+  .quota-meter {
     align-self: center;
   }
 }
