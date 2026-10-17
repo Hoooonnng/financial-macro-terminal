@@ -1191,6 +1191,7 @@ async function getRealEarningsDate(ticker) {
     const toDate = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const url = `https://finnhub.io/api/v1/calendar/earnings?from=${fromDate}&to=${toDate}&symbol=${upperTicker}&token=${finnhubToken}`;
+    trackFinnhubCall(); // 【2026-10-17】計入額度水位
     const response = await axios.get(url, { timeout: 4000 });
     const list = response.data.earningsCalendar || [];
     
@@ -1252,6 +1253,21 @@ let isSimulating = false;
 // 【2026-10-17 安全修復】Finnhub key 改走環境變數，不再硬編碼。
 // 舊 key 已在 finnhub.io 作廢；Render 需設定 FINNHUB_API_KEY。
 const finnhubToken = process.env.FINNHUB_API_KEY || "";
+
+// 【2026-10-17】Finnhub 額度水位：滾動 60 秒呼叫計數（免費版上限 60 calls/min）
+// 每次打 finnhub.io 前呼叫 trackFinnhubCall()；/api/health 暴露水位
+const finnhubCallTimes = [];
+function trackFinnhubCall() {
+  const now = Date.now();
+  finnhubCallTimes.push(now);
+  while (finnhubCallTimes.length && finnhubCallTimes[0] < now - 60000) finnhubCallTimes.shift();
+  return finnhubCallTimes.length;
+}
+function finnhubCallsLastMin() {
+  const now = Date.now();
+  while (finnhubCallTimes.length && finnhubCallTimes[0] < now - 60000) finnhubCallTimes.shift();
+  return finnhubCallTimes.length;
+}
 
 // 雙系統技術關卡計算模組
 function getTickerHash(ticker) {
@@ -1371,6 +1387,12 @@ function markStale(ticker) {
 // 背景輪詢定時任務 (集中式背景查詢，不依賴任何用戶的前端請求，每 60 秒統一撈取所有 active 股票數據)
 async function pollWatchlistData() {
   const tickersArray = Array.from(activeTickers);
+  // 【2026-10-17】額度守門：本輪開始前若 60 秒內已用 ≥50 次，整輪跳過等下一輪，避免 429
+  if (finnhubCallsLastMin() >= 50) {
+    console.warn(`⚠️ [Finnhub] 額度水位過高（${finnhubCallsLastMin()}/60），本輪跳過。`);
+    return;
+  }
+
   for (const ticker of tickersArray) {
     if (isSimulating) {
       markStale(ticker);
@@ -1379,6 +1401,7 @@ async function pollWatchlistData() {
     
     try {
       const url = `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${finnhubToken}`;
+      trackFinnhubCall(); // 【2026-10-17】計入額度水位
       const response = await axios.get(url, { timeout: 3000 });
       const data = response.data;
       
@@ -2708,6 +2731,8 @@ app.get('/api/health', (req, res) => {
     time: new Date().toISOString(),
     uptimeSec: Math.floor(process.uptime()),
     finnhub: !!process.env.FINNHUB_API_KEY,
+    finnhubCallsLastMin: finnhubCallsLastMin(), // 【2026-10-17】額度水位（免費上限 60/min）
+    finnhubLimitPerMin: 60,
     line: !!lineClient,
     watchlist: activeTickers.size
   });
