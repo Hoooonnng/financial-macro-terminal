@@ -319,6 +319,16 @@ class SidebarComponent {
 
       numbersDiv.appendChild(priceSpan);
       numbersDiv.appendChild(changeSpan);
+
+      // 【2026-10-17】報價過期徽章：後端取不到新報價時顯示最後已知價格＋標示
+      if (stock.stale) {
+        const staleBadge = document.createElement('span');
+        staleBadge.textContent = '延遲';
+        staleBadge.title = '報價更新失敗，顯示最後已知價格';
+        staleBadge.style.cssText = 'font-size:0.65rem;background:#6b7280;color:#fff;padding:0.1rem 0.35rem;border-radius:3px;margin-left:0.4rem;vertical-align:middle;';
+        numbersDiv.appendChild(staleBadge);
+      }
+
       rightDiv.appendChild(numbersDiv);
 
       const deleteBtn = document.createElement('button');
