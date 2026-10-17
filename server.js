@@ -34,6 +34,19 @@ const app = express();
 const PORT = 3000;
 
 // 靜態檔案託管：將專案目錄下的所有檔案設為靜態資源
+// 【2026-10-17 安全修復】擋掉後端原始碼與敏感檔案，避免被當靜態資源公開下載
+// （例如 /server.js 會直接回傳後端原始碼）
+const blockedStaticPaths = new Set([
+  '/server.js', '/test-api.js', '/push.bat',
+  '/package.json', '/package-lock.json', '/.env'
+]);
+app.use((req, res, next) => {
+  const p = req.path.toLowerCase();
+  if (blockedStaticPaths.has(p) || p.endsWith('.env') || p.includes('/.git/')) {
+    return res.status(404).send('Not found');
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname)));
 
 // 根據事件標題與指標判斷比較屬性 (CompareType)
@@ -2413,6 +2426,18 @@ async function runMorningReportWithRetry(retryCount = 0) {
 //   ★ 效果：cron-job.org 收到 200 OK 後立刻計為成功，不再等待 TCP 關閉
 // ==========================================
 app.get('/api/cron/morning-report', (req, res) => {
+  // 【2026-10-17 安全修復】cron 觸發端點驗證：若有設定 CRON_SECRET，
+  // 則必須帶對 secret（?secret=xxx 或 X-Cron-Secret header），否則 403。
+  // 未設定 CRON_SECRET 時保持原行為（部署過渡期不斷線）。
+  // 設定完 Render 環境變數後，記得把 cron-job.org 的 URL 改成
+  // https://financial-macro-terminal.onrender.com/api/cron/morning-report?secret=你的密鑰
+  const cronSecret = process.env.CRON_SECRET || '';
+  const providedSecret = req.query.secret || req.headers['x-cron-secret'] || '';
+  if (cronSecret && providedSecret !== cronSecret) {
+    console.warn(`🚫 [晨報端點] secret 驗證失敗，拒絕觸發。`);
+    return res.status(403).send('Forbidden');
+  }
+
   const triggerTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   console.log(`🌅 [晨報端點] 收到外部 Cron 請求，台北時間: ${triggerTime}`);
 
