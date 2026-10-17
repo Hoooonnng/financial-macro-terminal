@@ -1257,7 +1257,9 @@ const activeTickers = new Set([
 ]);
 
 let isSimulating = false;
-const finnhubToken = "d5ba1epr01qq0hq2kao0d5ba1epr01qq0hq2kaog";
+// 【2026-10-17 安全修復】Finnhub key 改走環境變數，不再硬編碼。
+// 舊 key 已在 finnhub.io 作廢；Render 需設定 FINNHUB_API_KEY。
+const finnhubToken = process.env.FINNHUB_API_KEY || "";
 
 // 雙系統技術關卡計算模組
 function getTickerHash(ticker) {
