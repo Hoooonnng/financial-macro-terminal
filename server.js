@@ -1035,6 +1035,8 @@ function getStrictImportance(title, indicator) {
   const isMedium =
     t.includes("gdp") ||
     t.includes("pmi") ||
+    t.includes("beige book") ||
+    t.includes("褐皮書") ||
     t.includes("retail sales") ||
     t.includes("retail sale") ||
     t.includes("pce") ||
@@ -1042,8 +1044,25 @@ function getStrictImportance(title, indicator) {
     ((t.includes("nonfarm") || t.includes("non-farm") || t.includes("non farm")) && isPrivateNFP);
     
   if (isMedium) return 2;
-  
+
   return 1;
+}
+
+// 【2026-10-18】二星白名單：點名放行的次高關鍵事件（前瞻預告用，不降門檻）
+// 命中者在前瞻中視為高衝擊，但即時快報仍維持三星，避免通知轟炸
+const FRONT_PAGE_2STAR_ALLOWLIST = [
+  /beige\s*book/i,
+  /褐皮書/,
+  /flash.*pmi/i,
+  /pmi.*flash/i,
+];
+
+function isFrontPageWorthy(e) {
+  if (!e || e.isMock) return false;
+  if (e.importance === 3) return true;
+  if (e.importance === 2 &&
+      FRONT_PAGE_2STAR_ALLOWLIST.some(rx => rx.test(e.title || ""))) return true;
+  return false;
 }
 
 // ==========================================
@@ -2200,7 +2219,7 @@ async function generateWeeklyPreviewText() {
   const events = await fetchEconomicEvents(`${taipeiTodayStr}T00:00:00Z`, `${nextWeekStr}T23:59:59Z`);
   const upcoming = events
     .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
-    .filter(e => e.importance === 3)
+    .filter(isFrontPageWorthy) // 【2026-10-18】三星＋白名單二星
     .sort((a, b) => `${a.date}T${a.time||'00:00'}`.localeCompare(`${b.date}T${b.time||'00:00'}`));
 
   let text = `🔮 【下週市場重大前瞻預告】\n`;
@@ -2211,7 +2230,8 @@ async function generateWeeklyPreviewText() {
   } else {
     text += `⚡ 核心重磅事件超前部署：\n\n`;
     upcoming.forEach((e, idx) => {
-      text += `${idx + 1}. 【${e.title}】(${e.date} ${e.time})\n`;
+      const star2 = e.importance === 2 ? '🔸次高 ' : '';
+      text += `${idx + 1}. ${star2}【${e.title}】(${e.date} ${e.time})\n`;
       text += `   📊 預測值: ${e.consensus || '無'}　📉 前值: ${e.previous || '無'}\n\n`;
     });
   }
@@ -2231,7 +2251,7 @@ async function generateDailyReportText() {
   const events = await fetchEconomicEvents(windowFromUTC, windowToUTC);
   const highImpactEvents = events
     .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
-    .filter(e => e.importance === 3)
+    .filter(isFrontPageWorthy) // 【2026-10-18】三星＋白名單二星
     .filter(e => {
       const eventDatetime = `${e.date}T${e.time || '00:00'}`;
       return eventDatetime >= `${taipeiTodayStr}T08:00` && eventDatetime <= `${taipeiTomorrowStr}T07:59`;
@@ -2247,7 +2267,8 @@ async function generateDailyReportText() {
     reportText += `⚡ 本窗口高衝擊核心要事預告：\n\n`;
     highImpactEvents.forEach((e, idx) => {
       const crossDay = e.date !== taipeiTodayStr ? ` (${e.date})` : '';
-      reportText += `${idx + 1}. 【${e.title}】${crossDay}\n`;
+      const star2 = e.importance === 2 ? '🔸次高 ' : '';
+      reportText += `${idx + 1}. ${star2}【${e.title}】${crossDay}\n`;
       reportText += `   ⏱️ 台北時間: ${e.time}\n`;
       reportText += `   📊 預測值: ${e.consensus || '無'}\n`;
       reportText += `   📉 前值: ${e.previous || '無'}\n\n`;
@@ -2304,7 +2325,7 @@ async function generateDailyReportText() {
   const tmrEvents = await fetchEconomicEvents(`${taipeiTomorrowStr}T00:00:00Z`, `${dayAfterStr}T00:00:00Z`);
   const tmrHigh = tmrEvents
     .filter(e => !e.isMock)
-    .filter(e => e.importance === 3)
+    .filter(isFrontPageWorthy) // 【2026-10-18】三星＋白名單二星
     .filter(e => {
       const dt = `${e.date}T${e.time || '00:00'}`;
       return dt >= `${taipeiTomorrowStr}T08:00` && dt <= `${dayAfterStr}T07:59`;
@@ -2314,7 +2335,8 @@ async function generateDailyReportText() {
     reportText += `\n\n🔮 【明日前瞻預告】\n`;
     tmrHigh.forEach((e, idx) => {
       const crossDay = e.date !== taipeiTomorrowStr ? ` (${e.date})` : '';
-      reportText += `${idx + 1}. 【${e.title}】${crossDay} ⏱️ ${e.time}\n`;
+      const star2 = e.importance === 2 ? '🔸次高 ' : '';
+      reportText += `${idx + 1}. ${star2}【${e.title}】${crossDay} ⏱️ ${e.time}\n`;
       reportText += `   📊 預測值: ${e.consensus || '無'}　📉 前值: ${e.previous || '無'}\n`;
     });
   }
