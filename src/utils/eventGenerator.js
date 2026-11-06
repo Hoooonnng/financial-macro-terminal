@@ -163,5 +163,7 @@ window.generateMacroEvents = function(year, month) {
     }
   }
 
+  // 【2026-11-07 Argon #5】本地生成的事件一律標 isMock，前端必須顯示「模擬資料」徽章，不得冒充真實行事曆
+  events.forEach(e => { e.isMock = true; });
   return events.sort((a, b) => a.date.localeCompare(b.date));
 };

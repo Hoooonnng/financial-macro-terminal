@@ -11,15 +11,16 @@ window.PRELOADED_TICKERS = [
 
 window.MOCK_STOCK_PROFILES = {
   TSLA: { name: "Tesla, Inc.", price: 406.43, change: 7.28, pct: 1.82, earningsMonths: [1, 4, 7, 10] },
-  TSLL: { name: "Direxion Daily TSLA 1.5x", price: 13.59, change: 0.47, pct: 3.58, earningsMonths: [3, 6, 9, 12] },
+  TSLL: { name: "Direxion Daily TSLA Bull 2X Shares", price: 13.59, change: 0.47, pct: 3.58, earningsMonths: [3, 6, 9, 12] },
   SPCX: { name: "Collaborative SPAC ETF", price: 16.00, change: -0.95, pct: -5.61, earningsMonths: [] }, 
   OUST: { name: "Ouster, Inc.", price: 39.80, change: 0.19, pct: 0.48, earningsMonths: [2, 5, 8, 11] },
   SOFI: { name: "SoFi Technologies", price: 16.58, change: -0.09, pct: -0.54, earningsMonths: [1, 4, 7, 10] },
   GRAB: { name: "Grab Holdings Limited", price: 3.30, change: -0.05, pct: -1.49, earningsMonths: [2, 5, 8, 11] },
-  CRCL: { name: "Cercano Acquisition Corp", price: 77.84, change: -4.79, pct: -5.80, earningsMonths: [3, 6, 9, 12] },
+  CRCL: { name: "Circle Internet Group, Inc.", price: 77.84, change: -4.79, pct: -5.80, earningsMonths: [3, 6, 9, 12] },
   NVDA: { name: "NVIDIA Corporation", price: 205.19, change: 0.32, pct: 0.16, earningsMonths: [2, 5, 8, 11] },
   GOOG: { name: "Alphabet Inc.", price: 359.68, change: 1.91, pct: 0.53, earningsMonths: [1, 4, 7, 10] },
   MSFT: { name: "Microsoft Corporation", price: 390.74, change: 0.40, pct: 0.10, earningsMonths: [1, 4, 7, 10] },
+  META: { name: "Meta Platforms, Inc.", price: 0, change: 0, pct: 0, earningsMonths: [1, 4, 7, 10] },
   AAPL: { name: "Apple Inc.", price: 291.13, change: -4.50, pct: -1.52, earningsMonths: [1, 4, 7, 10] },
   ONDS: { name: "Ondas Holdings Inc.", price: 9.33, change: -0.50, pct: -5.09, earningsMonths: [3, 6, 9, 12] },
   SNOW: { name: "Snowflake Inc.", price: 232.78, change: -7.61, pct: -3.17, earningsMonths: [3, 6, 9, 12] },
@@ -53,10 +54,6 @@ window.getFallbackProfile = function(ticker) {
     hash += upper.charCodeAt(i);
   }
   
-  const mockPrice = 10 + (hash % 490);
-  const mockChange = ((hash % 100) / 10) - 5;
-  const mockPct = parseFloat((mockChange / mockPrice * 100).toFixed(2));
-  
   const monthsGroup = [
     [1, 4, 7, 10],
     [2, 5, 8, 11],
@@ -64,12 +61,13 @@ window.getFallbackProfile = function(ticker) {
   ];
   const earningsMonths = monthsGroup[hash % 3];
 
+  // 【2026-11-07 Argon #15】對照表缺漏時標示未知：名稱只用代號、價格 null，禁止捏造公司名與假股價
   return {
     symbol: upper,
-    name: `${upper} International Inc.`,
-    price: parseFloat(mockPrice.toFixed(2)),
-    change: parseFloat(mockChange.toFixed(2)),
-    pct: mockPct,
+    name: upper,
+    price: null,
+    change: null,
+    pct: null,
     earningsMonths
   };
 };
@@ -95,65 +93,7 @@ window.getTickerHash = function(ticker) {
 };
 
 window.generateTechnicalLevels = function(ticker, refPrice, actualOpen) {
-  const hash = window.getTickerHash(ticker);
-  
-  // 經典系統關卡偏移 (昨日最高 PDH/昨日最低 PDL/今日開盤 Open)
-  const pdhOffset = 0.012 + (hash % 25) / 1000;   // 1.2% - 3.7%
-  const pdlOffset = 0.012 + ((hash * 3) % 25) / 1000;
-  const openOffset = -0.008 + ((hash * 7) % 16) / 1000; // -0.8% - +0.8%
-  
-  const pdh = parseFloat((refPrice * (1 + pdhOffset)).toFixed(2));
-  const pdl = parseFloat((refPrice * (1 - pdlOffset)).toFixed(2));
-  const open = actualOpen ? parseFloat(actualOpen.toFixed(2)) : parseFloat((refPrice * (1 + openOffset)).toFixed(2));
-  
-  // SMC 系統關卡偏移 (FVG 公允價值跳空 / OB 訂單塊)
-  const fvgOffsetBull = 0.006 + ((hash * 11) % 15) / 1000; // 0.6% - 2.1%
-  const fvgOffsetBear = 0.006 + ((hash * 13) % 15) / 1000;
-  
-  const obOffsetBull = 0.018 + ((hash * 17) % 20) / 1000; // 1.8% - 3.8%
-  const obOffsetBear = 0.018 + ((hash * 19) % 20) / 1000;
-
-  const fvgBullBottom = refPrice * (1 - fvgOffsetBull - 0.012);
-  const fvgBullTop = refPrice * (1 - fvgOffsetBull);
-  
-  const fvgBearBottom = refPrice * (1 + fvgOffsetBear);
-  const fvgBearTop = refPrice * (1 + fvgOffsetBear + 0.012);
-
-  const obBullBottom = refPrice * (1 - obOffsetBull - 0.015);
-  const obBullTop = refPrice * (1 - obOffsetBull);
-
-  const obBearBottom = refPrice * (1 + obOffsetBear);
-  const obBearTop = refPrice * (1 + obOffsetBear + 0.015);
-
-  return {
-    pdh,
-    pdl,
-    open,
-    fvgs: [
-      {
-        type: 'bullish',
-        bottom: parseFloat(fvgBullBottom.toFixed(2)),
-        top: parseFloat(fvgBullTop.toFixed(2)),
-        mitigated: false
-      },
-      {
-        type: 'bearish',
-        bottom: parseFloat(fvgBearBottom.toFixed(2)),
-        top: parseFloat(fvgBearTop.toFixed(2)),
-        mitigated: false
-      }
-    ],
-    obs: [
-      {
-        type: 'bullish',
-        bottom: parseFloat(obBullBottom.toFixed(2)),
-        top: parseFloat(obBullTop.toFixed(2))
-      },
-      {
-        type: 'bearish',
-        bottom: parseFloat(obBearBottom.toFixed(2)),
-        top: parseFloat(obBearTop.toFixed(2))
-      }
-    ]
-  };
+  // 【2026-11-07 Argon #9】原以代號 ASCII 雜湊捏造 PDH/PDL/FVG/OB 的實作已刪除。
+  // 技術關卡一律由後端以真實日 K 計算後回傳；前端不再自行生成，抓不到就回 null（不顯示關卡）。
+  return null;
 };

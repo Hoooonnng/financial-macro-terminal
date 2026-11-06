@@ -51,6 +51,19 @@ function getCompareType(title, indicator) {
   if (t.includes("jobless claims") || t.includes("initial claims") || t.includes("失業金") || t.includes("初請") || ind.includes("claims")) {
     return "lower-better";
   }
+  // 【2026-11-07 Argon #10】補齊缺席的三星指標多空方向（前後端共用同一份判定，避免結論分裂）
+  if (t.includes("unemployment") || t.includes("失業率") || ind.includes("unemployment")) {
+    return "lower-better";
+  }
+  if (t.includes("pce") || t.includes("personal consumption") || t.includes("個人消費支出")) {
+    return "lower-better";
+  }
+  if (t.includes("gdp") || t.includes("gross domestic") || t.includes("國內生產總值")) {
+    return "higher-better";
+  }
+  if (t.includes("pmi") || t.includes("purchasing managers")) {
+    return "higher-better";
+  }
   return "equal-neutral";
 }
 
@@ -664,7 +677,7 @@ function translateEvent(e) {
     { en: "Continuing Jobless Claims", zh: "續請失業金人數" },
     { en: "Jobless Claims 4-Week Average", zh: "初請失業金四週均值" },
     { en: "Jobless Claims", zh: "失業金人數" },
-    { en: "Fed Chair Powell Speaks", zh: "聯準會主席鮑爾發表演講" },
+    { en: "Fed Chair Warsh Speaks", zh: "聯準會主席沃什發表演講" },
     { en: "FOMC Press Conference", zh: "FOMC 會後記者會" },
     { en: "FOMC Meeting Minutes", zh: "FOMC 會議紀錄" },
     { en: "Federal Budget Balance", zh: "聯邦政府預算收支" },
@@ -684,22 +697,19 @@ function translateEvent(e) {
     "Fed": "聯準會",
     "Speaks": "發表演講",
     "Speech": "演講",
-    "Powell": "鮑爾",
+    "Warsh": "沃什",
     "Bowman": "鮑曼",
     "Williams": "威廉斯",
     "Waller": "沃勒",
     "Jefferson": "傑佛遜",
     "Barr": "巴爾",
     "Cook": "庫克",
-    "Kugler": "庫格勒",
-    "Barkin": "巴爾金",
+        "Barkin": "巴爾金",
     "Bostic": "波斯蒂克",
     "Daly": "戴莉",
-    "Mester": "梅斯特",
-    "Musalem": "穆薩萊姆",
+        "Musalem": "穆薩萊姆",
     "Schmid": "施密德",
-    "Harker": "哈克",
-    "Kashkari": "卡什卡里",
+        "Kashkari": "卡什卡里",
     "Goolsbee": "古爾斯比",
     "Logan": "洛根",
     
@@ -832,6 +842,15 @@ function translateEvent(e) {
 }
 
 // 格式化數值，拼接 scale (如 K, M) 與 unit (如 %)
+// 【2026-11-07 Argon #10】數量級感知解析："1.02M" -> 1020000、"980K" -> 980000、"4.4%" -> 4.4
+function parseScaledValue(str) {
+  if (str === null || str === undefined) return NaN;
+  const m = String(str).replace(/,/g, '').trim().match(/^(-?\d+(?:\.\d+)?)\s*([KMB])?%?$/i);
+  if (!m) return NaN;
+  const mult = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1;
+  return parseFloat(m[1]) * mult;
+}
+
 function formatValue(val, scale, unit, title = "") {
   if (val === null || val === undefined) return '';
   let str = val.toString();
@@ -842,7 +861,7 @@ function formatValue(val, scale, unit, title = "") {
     str += unit;
   } else if (title && (title.includes("率") || title.includes("YoY") || title.includes("MoM") || title.includes("同比") || title.includes("環比"))) {
     // 確保前端渲染時，如果是百分比數據，加上 % 符號
-    if (!str.includes("%") && !isNaN(parseFloat(str))) {
+    if (!scale && !str.includes("%") && /^-?\d+(\.\d+)?$/.test(str.trim())) {
       str += "%";
     }
   }
@@ -872,147 +891,7 @@ function getDaysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }
 
-function generateMockMacroEvents(year, month) {
-  const events = [];
-  const daysInMonth = getDaysInMonth(year, month);
-  const baseDateStr = "2026-06-15";
-
-  // 1. NFP
-  const nfpDay = getFirstDayOfWeekday(year, month, 5);
-  if (nfpDay <= daysInMonth) {
-    const dateStr = formatDate(year, month, nfpDay);
-    const isPast = dateStr <= baseDateStr;
-    events.push({
-      id: `macro-nfp-${year}-${month}`,
-      title: "非農就業人口數據 (NFP)",
-      type: "macro",
-      date: dateStr,
-      time: "20:30",
-      consensus: "180K",
-      actual: isPast ? "195K" : "",
-      previous: "175K",
-      compareType: "higher-better",
-      description: "美國非農就業人數及失業率，評估勞動力市場健康度與聯準會政策走向的最重要指標之一。",
-      importance: 3
-    });
-  }
-
-  // 2. CPI
-  const cpiDay = getNthDayOfWeekday(year, month, 3, 2);
-  if (cpiDay <= daysInMonth) {
-    const dateStr = formatDate(year, month, cpiDay);
-    const isPast = dateStr <= baseDateStr;
-    events.push({
-      id: `macro-cpi-${year}-${month}`,
-      title: "消費者物價指數 (CPI)",
-      type: "macro",
-      date: dateStr,
-      time: "20:30",
-      consensus: "3.1%",
-      actual: isPast ? "3.3%" : "",
-      previous: "3.0%",
-      compareType: "lower-better",
-      description: "美國通膨核心數據，衡量消費者物價變動幅度，對降息/升息決策有極大影響力。",
-      importance: 3
-    });
-
-    // 3. PPI
-    const ppiDay = cpiDay + 1;
-    if (ppiDay <= daysInMonth) {
-      const ppiDateStr = formatDate(year, month, ppiDay);
-      const isPpiPast = ppiDateStr <= baseDateStr;
-      events.push({
-        id: `macro-ppi-${year}-${month}`,
-        title: "生產者物價指數 (PPI)",
-        type: "macro",
-        date: ppiDateStr,
-        time: "20:30",
-        consensus: "0.2%",
-        actual: isPpiPast ? "0.1%" : "",
-        previous: "0.3%",
-        compareType: "lower-better",
-        description: "衡量生產者交易的商品價格變動，為 CPI 的領先指標之一。",
-        importance: 1
-      });
-    }
-  }
-
-  // 4. Retail Sales
-  const retailDay = getNthDayOfWeekday(year, month, 2, 3);
-  if (retailDay <= daysInMonth) {
-    const dateStr = formatDate(year, month, retailDay);
-    const isPast = dateStr <= baseDateStr;
-    events.push({
-      id: `macro-retail-${year}-${month}`,
-      title: "零售銷售數據 (Retail Sales)",
-      type: "macro",
-      date: dateStr,
-      time: "20:30",
-      consensus: "0.4%",
-      actual: isPast ? "0.6%" : "",
-      previous: "0.3%",
-      compareType: "higher-better",
-      description: "美國消費市道晴雨表，衡量零售商店的總營業額，佔美國 GDP 佔比極大。",
-      importance: 2
-    });
-  }
-
-  // 5. FOMC
-  const fomcMonths = [1, 3, 5, 6, 7, 9, 11, 12];
-  if (fomcMonths.includes(month)) {
-    const fomcDay = getNthDayOfWeekday(year, month, 3, 3);
-    if (fomcDay <= daysInMonth) {
-      const dateStr = formatDate(year, month, fomcDay);
-      const isPast = dateStr <= baseDateStr;
-      events.push({
-        id: `macro-fomc-${year}-${month}`,
-        title: "FOMC 利率決策會議 (FOMC)",
-        type: "macro",
-        date: dateStr,
-        time: "02:00",
-        consensus: "5.25%",
-        actual: isPast ? "5.25%" : "",
-        previous: "5.25%",
-        compareType: "equal-neutral",
-        description: "美國聯邦公開市場委員會公佈利率決策、聲明及經濟預測(季度會議)，隨後舉行記者會。",
-        importance: 3
-      });
-    }
-  }
-
-  // 6. 每週初請失業金人數
-  for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(year, month - 1, day);
-    if (date.getDay() === 4) {
-      const dateStr = formatDate(year, month, day);
-      const isPast = dateStr <= baseDateStr;
-      const seed = day + month + year;
-      const prevVal = 210 + (seed % 15);
-      const consVal = prevVal + (seed % 5 - 2);
-      const actVal = isPast ? consVal - (seed % 4 - 2) : "";
-
-      events.push({
-        id: `macro-claims-${year}-${month}-${day}`,
-        title: "每週初請失業金人數",
-        type: "macro",
-        date: dateStr,
-        time: "20:30",
-        consensus: `${consVal}K`,
-        actual: isPast ? `${actVal}K` : "",
-        previous: `${prevVal}K`,
-        compareType: "lower-better",
-        description: "每週公佈一次的就業市場短期領先指標，反映失業及申領救濟金人數變化。",
-        importance: 1
-      });
-    }
-  }
-
-  // 【2026-10-17】Mock 降級誠實標記：所有本地生成的假事件一律標 isMock，
-  // 前端必須顯示「模擬資料」徽章，避免使用者誤當真實行事曆。
-  events.forEach(e => { e.isMock = true; });
-
-  return events.sort((a, b) => a.date.localeCompare(b.date));
-}
+// 【2026-11-07 Argon #2】generateMockMacroEvents 已刪除：抓取失敗改拋錯誠實降級，不再生成假總經事件。
 
 // 判斷事件重要性：3 (高/紅色), 2 (中/藍色), 1 (低/灰色)
 function getStrictImportance(title, indicator) {
@@ -1071,15 +950,16 @@ function isFrontPageWorthy(e) {
 
 const MOCK_STOCK_PROFILES = {
   TSLA: { name: "Tesla, Inc.", price: 406.43, change: 7.28, pct: 1.82, earningsMonths: [1, 4, 7, 10] },
-  TSLL: { name: "Direxion Daily TSLA 1.5x", price: 13.59, change: 0.47, pct: 3.58, earningsMonths: [3, 6, 9, 12] },
+  TSLL: { name: "Direxion Daily TSLA Bull 2X Shares", price: 13.59, change: 0.47, pct: 3.58, earningsMonths: [3, 6, 9, 12] },
   SPCX: { name: "Collaborative SPAC ETF", price: 16.00, change: -0.95, pct: -5.61, earningsMonths: [] }, 
   OUST: { name: "Ouster, Inc.", price: 39.80, change: 0.19, pct: 0.48, earningsMonths: [2, 5, 8, 11] },
   SOFI: { name: "SoFi Technologies", price: 16.58, change: -0.09, pct: -0.54, earningsMonths: [1, 4, 7, 10] },
   GRAB: { name: "Grab Holdings Limited", price: 3.30, change: -0.05, pct: -1.49, earningsMonths: [2, 5, 8, 11] },
-  CRCL: { name: "Cercano Acquisition Corp", price: 77.84, change: -4.79, pct: -5.80, earningsMonths: [3, 6, 9, 12] },
+  CRCL: { name: "Circle Internet Group, Inc.", price: 77.84, change: -4.79, pct: -5.80, earningsMonths: [3, 6, 9, 12] },
   NVDA: { name: "NVIDIA Corporation", price: 205.19, change: 0.32, pct: 0.16, earningsMonths: [2, 5, 8, 11] },
   GOOG: { name: "Alphabet Inc.", price: 359.68, change: 1.91, pct: 0.53, earningsMonths: [1, 4, 7, 10] },
   MSFT: { name: "Microsoft Corporation", price: 390.74, change: 0.40, pct: 0.10, earningsMonths: [1, 4, 7, 10] },
+  META: { name: "Meta Platforms, Inc.", price: 0, change: 0, pct: 0, earningsMonths: [1, 4, 7, 10] },
   AAPL: { name: "Apple Inc.", price: 291.13, change: -4.50, pct: -1.52, earningsMonths: [1, 4, 7, 10] },
   ONDS: { name: "Ondas Holdings Inc.", price: 9.33, change: -0.50, pct: -5.09, earningsMonths: [3, 6, 9, 12] },
   SNOW: { name: "Snowflake Inc.", price: 232.78, change: -7.61, pct: -3.17, earningsMonths: [3, 6, 9, 12] },
@@ -1166,10 +1046,6 @@ function getFallbackProfile(ticker) {
     hash += upper.charCodeAt(i);
   }
   
-  const mockPrice = 10 + (hash % 490);
-  const mockChange = ((hash % 100) / 10) - 5;
-  const mockPct = parseFloat((mockChange / mockPrice * 100).toFixed(2));
-  
   const monthsGroup = [
     [1, 4, 7, 10],
     [2, 5, 8, 11],
@@ -1177,12 +1053,13 @@ function getFallbackProfile(ticker) {
   ];
   const earningsMonths = monthsGroup[hash % 3];
 
+  // 【2026-11-07 Argon #15】對照表缺漏時標示未知：名稱只用代號本身、價格一律 null，禁止捏造公司名與假股價
   return {
     symbol: upper,
-    name: `${upper} International Inc.`,
-    price: parseFloat(mockPrice.toFixed(2)),
-    change: parseFloat(mockChange.toFixed(2)),
-    pct: mockPct,
+    name: upper,
+    price: null,
+    change: null,
+    pct: null,
     earningsMonths
   };
 }
@@ -1200,7 +1077,7 @@ async function getRealEarningsDate(ticker) {
 
   // If rate limit is active, don't call
   if (isSimulating) {
-    return cached ? cached.data : null; // fallback to old cached value or null
+    return cached ? cached.data : { date: null, hour: null }; // fallback to old cached value or null
   }
 
   try {
@@ -1215,34 +1092,30 @@ async function getRealEarningsDate(ticker) {
     const list = response.data.earningsCalendar || [];
     
     let earningsDate = null;
+    let earningsHour = null;
     if (list.length > 0) {
       // Sort to find the upcoming or closest future earnings date
       // We look for dates >= today's date
-      const todayStr = today.toISOString().split('T')[0];
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
       const futureEarnings = list
         .filter(item => item.date >= todayStr)
         .sort((a, b) => a.date.localeCompare(b.date));
         
       if (futureEarnings.length > 0) {
         earningsDate = futureEarnings[0].date;
-      } else {
-        // If no future earnings, get the most recent past one
-        const pastEarnings = list
-          .filter(item => item.date < todayStr)
-          .sort((a, b) => b.date.localeCompare(a.date));
-        if (pastEarnings.length > 0) {
-          earningsDate = pastEarnings[0].date;
-        }
+        earningsHour = futureEarnings[0].hour || null;
       }
+      // 【2026-11-07 Argon #8】未來 90 天查無財報就回 null（無財報），禁止回傳過去的舊財報日冒充預計公佈
     }
 
     // Cache the result (even if it's null, so we don't spam the API)
+    const earningsResult = { date: earningsDate, hour: earningsHour };
     earningsCache[upperTicker] = {
       timestamp: Date.now(),
-      data: earningsDate
+      data: earningsResult
     };
 
-    return earningsDate;
+    return earningsResult;
   } catch (error) {
     if (error.response && error.response.status === 429) {
       isSimulating = true;
@@ -1251,7 +1124,7 @@ async function getRealEarningsDate(ticker) {
       }, 60000);
     }
     // Return old cached data if exists, otherwise null
-    return cached ? cached.data : null;
+    return cached ? cached.data : { date: null, hour: null };
   }
 }
 
@@ -1289,77 +1162,37 @@ function finnhubCallsLastMin() {
 }
 
 // 雙系統技術關卡計算模組
-function getTickerHash(ticker) {
+// 【2026-11-07 Argon #9】技術關卡改用真實資料：PDH/PDL 來自 Finnhub 日 K 的前一交易日高/低。
+// 原以股票代號 ASCII 雜湊捏造 PDH/PDL/FVG/OB 的 generateTechnicalLevels 已刪除；
+// FVG/OB 無真實 K 線計算來源，停用（回傳空陣列）；日 K 抓不到時 technicalLevels=null，前端不顯示關卡。
+const prevDayLevelsCache = {};
+const PREV_LEVELS_CACHE_DURATION = 30 * 60 * 1000; // 30 分鐘
+async function fetchPrevDayLevels(ticker) {
   const upper = ticker.toUpperCase();
-  let hash = 0;
-  for (let i = 0; i < upper.length; i++) {
-    hash += upper.charCodeAt(i);
+  const cachedLv = prevDayLevelsCache[upper];
+  if (cachedLv && (Date.now() - cachedLv.timestamp < PREV_LEVELS_CACHE_DURATION)) {
+    return cachedLv.data;
   }
-  return hash;
-}
-
-function generateTechnicalLevels(ticker, refPrice, actualOpen) {
-  const hash = getTickerHash(ticker);
-  
-  // 經典系統關卡偏移 (昨日最高 PDH/昨日最低 PDL/今日開盤 Open)
-  const pdhOffset = 0.012 + (hash % 25) / 1000;   // 1.2% - 3.7%
-  const pdlOffset = 0.012 + ((hash * 3) % 25) / 1000;
-  const openOffset = -0.008 + ((hash * 7) % 16) / 1000; // -0.8% - +0.8%
-  
-  const pdh = parseFloat((refPrice * (1 + pdhOffset)).toFixed(2));
-  const pdl = parseFloat((refPrice * (1 - pdlOffset)).toFixed(2));
-  const open = actualOpen ? parseFloat(actualOpen.toFixed(2)) : parseFloat((refPrice * (1 + openOffset)).toFixed(2));
-  
-  // SMC 系統關卡偏移 (FVG 公允價值跳空 / OB 訂單塊)
-  const fvgOffsetBull = 0.006 + ((hash * 11) % 15) / 1000; // 0.6% - 2.1%
-  const fvgOffsetBear = 0.006 + ((hash * 13) % 15) / 1000;
-  
-  const obOffsetBull = 0.018 + ((hash * 17) % 20) / 1000; // 1.8% - 3.8%
-  const obOffsetBear = 0.018 + ((hash * 19) % 20) / 1000;
-
-  const fvgBullBottom = refPrice * (1 - fvgOffsetBull - 0.012);
-  const fvgBullTop = refPrice * (1 - fvgOffsetBull);
-  
-  const fvgBearBottom = refPrice * (1 + fvgOffsetBear);
-  const fvgBearTop = refPrice * (1 + fvgOffsetBear + 0.012);
-
-  const obBullBottom = refPrice * (1 - obOffsetBull - 0.015);
-  const obBullTop = refPrice * (1 - obOffsetBull);
-
-  const obBearBottom = refPrice * (1 + obOffsetBear);
-  const obBearTop = refPrice * (1 + obOffsetBear + 0.015);
-
-  return {
-    pdh,
-    pdl,
-    open,
-    fvgs: [
-      {
-        type: 'bullish',
-        bottom: parseFloat(fvgBullBottom.toFixed(2)),
-        top: parseFloat(fvgBullTop.toFixed(2)),
-        mitigated: false
-      },
-      {
-        type: 'bearish',
-        bottom: parseFloat(fvgBearBottom.toFixed(2)),
-        top: parseFloat(fvgBearTop.toFixed(2)),
-        mitigated: false
-      }
-    ],
-    obs: [
-      {
-        type: 'bullish',
-        bottom: parseFloat(obBullBottom.toFixed(2)),
-        top: parseFloat(obBullTop.toFixed(2))
-      },
-      {
-        type: 'bearish',
-        bottom: parseFloat(obBearBottom.toFixed(2)),
-        top: parseFloat(obBearTop.toFixed(2))
-      }
-    ]
-  };
+  try {
+    const toTs = Math.floor(Date.now() / 1000);
+    const fromTs = toTs - 12 * 24 * 60 * 60;
+    const url = `https://finnhub.io/api/v1/stock/candle?symbol=${upper}&resolution=D&from=${fromTs}&to=${toTs}&token=${finnhubToken}`;
+    trackFinnhubCall();
+    const response = await axios.get(url, { timeout: 4000 });
+    const d = response.data;
+    if (!d || d.s !== 'ok' || !Array.isArray(d.t) || d.t.length === 0) throw new Error('no candle data');
+    const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    let idx = d.t.length - 1;
+    const lastDateET = new Date(d.t[idx] * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    if (lastDateET === todayET && idx > 0) idx -= 1; // 最後一根若為今日未完成日 K，取前一交易日
+    const data = { pdh: d.h[idx], pdl: d.l[idx] };
+    if (typeof data.pdh !== 'number' || typeof data.pdl !== 'number') throw new Error('bad candle data');
+    prevDayLevelsCache[upper] = { timestamp: Date.now(), data };
+    return data;
+  } catch (err) {
+    prevDayLevelsCache[upper] = { timestamp: Date.now(), data: null };
+    return null;
+  }
 }
 
 function updateFvgMitigation(ticker, price) {
@@ -1380,15 +1213,17 @@ function updateFvgMitigation(ticker, price) {
 // 初始化快取 (不產生任何虛假 mock 財報日期，初始值設為 null，等待背景輪詢異步填充)
 for (const ticker of activeTickers) {
   const prof = getFallbackProfile(ticker);
+  // 【2026-11-07 Argon #4/#9】初始值一律 null + stale，等待第一輪真實報價；禁止用對照表舊價或雜湊假價種快取
   globalStockCache[ticker] = {
     name: prof.name,
-    price: prof.price,
-    change: prof.change,
-    pct: prof.pct,
-    earningsDate: null
+    price: null,
+    change: null,
+    pct: null,
+    earningsDate: null,
+    earningsHour: null,
+    stale: true,
+    technicalLevels: null
   };
-  globalStockCache[ticker].technicalLevels = generateTechnicalLevels(ticker, prof.price, prof.price);
-  updateFvgMitigation(ticker, prof.price);
 }
 
 // 【2026-10-17 已移除】simulateStockTick 偽造隨機股價跳動已刪除，
@@ -1425,30 +1260,30 @@ async function pollWatchlistData() {
       const data = response.data;
       
       // 取得真實財報日期 (15分鐘快取保護)
-      const earningsDate = await getRealEarningsDate(ticker);
+      const earningsResult = await getRealEarningsDate(ticker);
+      const earningsDate = earningsResult ? earningsResult.date : null;
+      const earningsHour = earningsResult ? earningsResult.hour : null;
       
       if (data && typeof data.c === 'number' && data.c > 0) {
         const cached = globalStockCache[ticker] || {};
         cached.price = data.c;
-        cached.change = data.d || 0;
-        cached.pct = data.dp || 0;
+        // 【2026-11-07 Argon #4】禁止 zero-fill：欄位缺失保留舊值（無舊值則 null），並保留延遲標記
+        const partialQuote = typeof data.d !== 'number' || typeof data.dp !== 'number';
+        cached.change = (typeof data.d === 'number') ? data.d : (cached.change ?? null);
+        cached.pct = (typeof data.dp === 'number') ? data.dp : (cached.pct ?? null);
         cached.earningsDate = earningsDate;
-        cached.stale = false; // 成功取回即清除過期標記
-        cached.staleSince = null;
+        cached.earningsHour = earningsHour;
+        cached.stale = partialQuote; // 成功取回即清除過期標記（部分欄位缺失時除外）
+        cached.staleSince = partialQuote ? (cached.staleSince || Date.now()) : null;
         const baseProfile = getFallbackProfile(ticker);
         cached.name = baseProfile.name;
         
-        // 取得或更新技術關卡
-        const refPrice = data.pc || data.c || baseProfile.price;
-        const actualOpen = data.o || data.c || baseProfile.price;
-        if (!cached.technicalLevels) {
-          cached.technicalLevels = generateTechnicalLevels(ticker, refPrice, actualOpen);
-        } else {
-          cached.technicalLevels.open = actualOpen;
-          const updatedLevels = generateTechnicalLevels(ticker, refPrice, actualOpen);
-          cached.technicalLevels.pdh = updatedLevels.pdh;
-          cached.technicalLevels.pdl = updatedLevels.pdl;
-        }
+        // 【2026-11-07 Argon #9】技術關卡改用真實日 K 前日高低；抓不到標缺失（null），不再雜湊捏造
+        const prevLevels = await fetchPrevDayLevels(ticker);
+        const actualOpen = (typeof data.o === 'number' && data.o > 0) ? data.o : data.c;
+        cached.technicalLevels = prevLevels
+          ? { pdh: prevLevels.pdh, pdl: prevLevels.pdl, open: actualOpen, fvgs: [], obs: [] }
+          : null;
         
         globalStockCache[ticker] = cached;
         updateFvgMitigation(ticker, data.c);
@@ -1471,7 +1306,7 @@ async function pollWatchlistData() {
 }
 
 // 立即執行一次，以在此端點被請求前，先異步抓取好真實行情與財報
-pollWatchlistData();
+const initialPollPromise = pollWatchlistData();
 // 背景輪詢定時器 (間隔拉長至 60 秒以減輕 Finnhub API 負載)
 setInterval(pollWatchlistData, 60000);
 
@@ -1491,13 +1326,14 @@ app.get('/api/watchlist', (req, res) => {
       const prof = getFallbackProfile(ticker);
       globalStockCache[ticker] = {
         name: prof.name,
-        price: prof.price,
-        change: prof.change,
-        pct: prof.pct,
-        earningsDate: null
+        price: null,
+        change: null,
+        pct: null,
+        earningsDate: null,
+        earningsHour: null,
+        stale: true,
+        technicalLevels: null
       };
-      globalStockCache[ticker].technicalLevels = generateTechnicalLevels(ticker, prof.price, prof.price);
-      updateFvgMitigation(ticker, prof.price);
     }
     responseData[ticker] = globalStockCache[ticker];
   }
@@ -1544,9 +1380,15 @@ function areTitlesDuplicate(t1, t2) {
   return n1 === n2;
 }
 
-function getPrimaryScore(title) {
+function getPrimaryScore(title, item) {
   const t = (title || "").toLowerCase();
   let score = 0;
+  // 【2026-11-07 Argon #18】資料完整度優先：有實際/預測/前值的事件不得被空值同名事件覆蓋
+  if (item) {
+    if (item.actual !== null && item.actual !== undefined && String(item.actual).trim() !== "") score += 40;
+    if (item.forecast !== null && item.forecast !== undefined && String(item.forecast).trim() !== "") score += 30;
+    if (item.previous !== null && item.previous !== undefined && String(item.previous).trim() !== "") score += 20;
+  }
   if (t.includes("pmi")) score += 10;
   if (t.includes("index")) score += 8;
   if (t.includes("orders")) score += 5;
@@ -1587,15 +1429,15 @@ function isDuplicateEvent(e1, e2) {
 }
 
 function processRawEvents(tvResult) {
-  // 1. 黑名單過濾：排除國債、Redbook、Mortgage、鑽井數、非鮑爾演講等低指引事件
+  // 1. 黑名單過濾：排除國債、Redbook、Mortgage、鑽井數、非主席演講等低指引事件
   const filteredResult = tvResult.filter(e => {
     const title = (e.title || "").toLowerCase();
     const indicator = (e.indicator || "").toLowerCase();
     const t = title + " " + indicator;
     
-    // 特例排除：主席鮑威爾演講保留
+    // 特例排除：僅保留現任聯準會主席演講（2026 年起主席為 Kevin Warsh；以職稱 "fed chair" 為準、姓名為輔，避免主席更替再次全數誤殺）
     if (t.includes("speech") || t.includes("speaks") || t.includes("speak")) {
-      return t.includes("powell");
+      return t.includes("fed chair") || t.includes("warsh");
     }
     
     // 剔除通膨原始絕對值 (Raw Index Level)：CPI, PPI, PCE 等通膨指數，必須帶有 YoY 或 MoM，否則視為絕對值並剔除
@@ -1650,8 +1492,8 @@ function processRawEvents(tvResult) {
     
     if (dupIndex !== -1) {
       const existingEvent = uniqueResult[dupIndex];
-      const scoreExisting = getPrimaryScore(existingEvent.title);
-      const scoreNew = getPrimaryScore(event.title);
+      const scoreExisting = getPrimaryScore(existingEvent.title, existingEvent);
+      const scoreNew = getPrimaryScore(event.title, event);
       if (scoreNew > scoreExisting) {
         uniqueResult[dupIndex] = event;
       }
@@ -1775,10 +1617,15 @@ function processRawEvents(tvResult) {
       // 比對：如果新前值與快取的舊前值不一致，標記為修正
       if (cached.previous !== currentPrevious) {
         event.is_revised = true;
-        event.original_previous = cached.previous;
-        // 更新快取為最新值
+        event.original_previous = cached.original_previous || cached.previous;
+        // 更新快取為最新值，並持久保留修正狀態（Argon #13：第一個呼叫者用過後，其他路徑也要看得到）
         cached.previous = currentPrevious;
+        cached.is_revised = true;
+        cached.original_previous = event.original_previous;
         cached.timestamp = Date.now();
+      } else if (cached.is_revised) {
+        event.is_revised = true;
+        event.original_previous = cached.original_previous;
       }
     } else {
       // 首次見到此事件，寫入快取
@@ -1799,10 +1646,17 @@ const previousValueCache = {};
 const economicCalendarCache = {};
 const ECONOMIC_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 
-async function fetchEconomicEvents(from, to) {
+async function fetchEconomicEvents(from, to, opts) {
   const cacheKey = `${from}_${to}`;
   const cached = economicCalendarCache[cacheKey];
   const now = Date.now();
+
+  // 【2026-11-07 Argon #6】即時快報專用：force 時繞過 1 小時快取直連抓取並更新快取
+  if (opts && opts.force) {
+    const fresh = await fetcher();
+    economicCalendarCache[cacheKey] = { timestamp: Date.now(), data: fresh, revalidating: false };
+    return fresh;
+  }
 
   const fetcher = async () => {
     try {
@@ -1821,33 +1675,8 @@ async function fetchEconomicEvents(from, to) {
       const tvResult = response.data.result || [];
       return processRawEvents(tvResult);
     } catch (error) {
-      const parsedEvents = [];
-      try {
-        const startDate = new Date(from);
-        const endDate = new Date(to);
-        
-        let currYear = startDate.getFullYear();
-        let currMonth = startDate.getMonth() + 1;
-        const endYear = endDate.getFullYear();
-        const endMonth = endDate.getMonth() + 1;
-        
-        while (currYear < endYear || (currYear === endYear && currMonth <= endMonth)) {
-          const mockEvents = generateMockMacroEvents(currYear, currMonth);
-          parsedEvents.push(...mockEvents);
-          
-          currMonth++;
-          if (currMonth > 12) {
-            currMonth = 1;
-            currYear++;
-          }
-        }
-        
-        const startStr = from.substring(0, 10);
-        const endStr = to.substring(0, 10);
-        return parsedEvents.filter(e => e.date >= startStr && e.date <= endStr);
-      } catch (fallbackError) {
-        return [];
-      }
+      // 【2026-11-07 Argon #2/#3】抓取失敗直接拋錯：呼叫端（晨報重試／SWR 保留舊值／端點回 502）各自誠實降級，禁止在此回傳 mock 假事件冒充真資料
+      throw error;
     }
   };
 
@@ -1885,8 +1714,8 @@ app.get('/api/economic-calendar', async (req, res) => {
       const y = parseInt(year);
       const m = parseInt(month);
       const lastDay = getDaysInMonth(y, m);
-      from = `${y}-${String(m).padStart(2, '0')}-01T00:00:00Z`;
-      to = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59Z`;
+      from = `${y}-${String(m).padStart(2, '0')}-01T00:00:00+08:00`;
+      to = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59+08:00`;
     } else {
       // 預設為目前時間開始的未來 30 天
       const start = new Date();
@@ -1896,42 +1725,17 @@ app.get('/api/economic-calendar', async (req, res) => {
     }
   }
 
-  const finalResult = await fetchEconomicEvents(from, to);
-  return res.json(finalResult);
+  try {
+    const finalResult = await fetchEconomicEvents(from, to);
+    return res.json(finalResult);
+  } catch (err) {
+    // 【2026-11-07 Argon #2】上游失敗回 502，前端顯示錯誤狀態，不回假資料也不回空陣列冒充無事件
+    return res.status(502).json({ error: "economic_calendar_unavailable" });
+  }
 });
 
 // Mock FRED observations generator when no API key or on rate limit
-function generateMockFredObservations(seriesId) {
-  const observations = [];
-  const now = new Date();
-  for (let i = 12; i >= 0; i--) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const dateStr = date.toISOString().split('T')[0];
-    let value = 0;
-    if (seriesId === 'CPIAUCSL') {
-      value = 320 + (12 - i) * 1.2 + Math.random() * 0.5;
-    } else if (seriesId === 'GDPC1') {
-      value = 22000 + (12 - i) * 80 + Math.random() * 20;
-    } else if (seriesId === 'PAYEMS') {
-      value = 158000 + (12 - i) * 150 + Math.random() * 50;
-    } else if (seriesId === 'UNRATE') {
-      value = 3.5 + Math.random() * 0.8;
-    } else if (seriesId === 'PCEPI') {
-      value = 130 + (12 - i) * 0.4 + Math.random() * 0.2;
-    } else if (seriesId === 'PPIACO') {
-      value = 230 + (12 - i) * 0.8 + Math.random() * 0.4;
-    } else if (seriesId === 'RSAFS') {
-      value = 680000 + (12 - i) * 3000 + Math.random() * 1000;
-    } else {
-      value = 100 + Math.random() * 10;
-    }
-    observations.push({
-      date: dateStr,
-      value: value.toFixed(2)
-    });
-  }
-  return observations;
-}
+// 【2026-11-07 Argon #3】generateMockFredObservations 已刪除：FRED 失敗改拋錯，不再回傳 Math.random() 假序列。
 
 const fredCache = {};
 const FRED_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
@@ -1953,14 +1757,14 @@ app.get('/api/historical-data', async (req, res) => {
   
   const fetcher = async () => {
     if (!fredApiKey) {
-      return generateMockFredObservations(seriesId);
+      throw new Error('FRED upstream unavailable');
     }
     try {
       const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${fredApiKey}&file_type=json`;
       const response = await axios.get(url, { timeout: 5000 });
       return response.data.observations || [];
     } catch (err) {
-      return generateMockFredObservations(seriesId);
+      throw new Error('FRED upstream unavailable');
     }
   };
   
@@ -2002,14 +1806,14 @@ app.get('/api/fred/observations', async (req, res) => {
   
   const fetcher = async () => {
     if (!fredApiKey) {
-      return generateMockFredObservations(seriesId);
+      throw new Error('FRED upstream unavailable');
     }
     try {
       const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${fredApiKey}&file_type=json`;
       const response = await axios.get(url, { timeout: 5000 });
       return response.data.observations || [];
     } catch (err) {
-      return generateMockFredObservations(seriesId);
+      throw new Error('FRED upstream unavailable');
     }
   };
   
@@ -2187,7 +1991,7 @@ async function generateWeeklyReviewText() {
   const weekAgoObj = new Date(Date.UTC(tyY, tyM - 1, tyD - 6));
   const weekAgoStr = weekAgoObj.toISOString().split('T')[0];
 
-  const events = await fetchEconomicEvents(`${weekAgoStr}T00:00:00Z`, `${taipeiTodayStr}T23:59:59Z`);
+  const events = await fetchEconomicEvents(`${weekAgoStr}T00:00:00+08:00`, `${taipeiTodayStr}T23:59:59+08:00`);
   const pastHighImpact = events
     .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
     .filter(e => e.importance === 3 && e.actual && e.actual.toString().trim() !== '')
@@ -2216,7 +2020,7 @@ async function generateWeeklyPreviewText() {
   const nextWeekObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 7));
   const nextWeekStr = nextWeekObj.toISOString().split('T')[0];
 
-  const events = await fetchEconomicEvents(`${taipeiTodayStr}T00:00:00Z`, `${nextWeekStr}T23:59:59Z`);
+  const events = await fetchEconomicEvents(`${taipeiTodayStr}T00:00:00+08:00`, `${nextWeekStr}T23:59:59+08:00`);
   const upcoming = events
     .filter(e => !e.isMock) // 【2026-10-17】LINE 推播永不使用 mock 假資料
     .filter(isFrontPageWorthy) // 【2026-10-18】三星＋白名單二星
@@ -2240,6 +2044,8 @@ async function generateWeeklyPreviewText() {
 
 // 【週一至週五】平日常態晨報：8AM-to-8AM 交易員滾動窗口
 async function generateDailyReportText() {
+  // 【2026-11-07 Argon #14】冷啟動時先等第一輪行情/財報抓取（最多 20 秒），避免讀到全 null 快取漏掉財報預告
+  await Promise.race([initialPollPromise, new Promise(r => setTimeout(r, 20000))]);
   const now = new Date();
   const taipeiTodayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
   const windowFromUTC = `${taipeiTodayStr}T00:00:00Z`;
@@ -2277,9 +2083,9 @@ async function generateDailyReportText() {
 
   // 附加財報預告（今日＋未來 7 天）
   // 【2026-10-17】原僅提醒當日財報，現延伸為 7 天預告
-  const targetTickers = (global.dynamicWatchlist && global.dynamicWatchlist.length > 0) 
-    ? global.dynamicWatchlist 
-    : CORE_TICKERS;
+  const targetTickers = (global.dynamicWatchlist && global.dynamicWatchlist.length > 0)
+    ? global.dynamicWatchlist
+    : Array.from(activeTickers); // 【2026-11-07 Argon #14】晨報財報清單與實際輪詢的 21 檔對齊，不再退回 5 檔核心股
 
   const sevenDaysLaterObj = new Date(Date.UTC(tyY, tyM - 1, tyD + 7));
   const sevenDaysLaterStr = sevenDaysLaterObj.toISOString().split('T')[0];
@@ -2289,10 +2095,17 @@ async function generateDailyReportText() {
   for (const ticker of targetTickers) {
     const cached = globalStockCache[ticker.toUpperCase()];
     if (!cached || !cached.earningsDate) continue;
-    if (cached.earningsDate === taipeiTodayStr) {
-      earningsText += `   📈 ${ticker.toUpperCase()} 財報發布\n`;
-    } else if (cached.earningsDate > taipeiTodayStr && cached.earningsDate <= sevenDaysLaterStr) {
-      upcomingEarningsText += `   📅 ${cached.earningsDate} ${ticker.toUpperCase()}\n`;
+    // 【2026-11-07 Argon #8】Finnhub 日期是美東日期：盤後 (amc) 換算為台北隔日；時段與「未確認」一併標示，不再讓讀者猜
+    const hourTag = cached.earningsHour === 'amc' ? '美股盤後' : cached.earningsHour === 'bmo' ? '美股盤前' : '時段未確認';
+    let effectiveDate = cached.earningsDate;
+    if (cached.earningsHour === 'amc') {
+      const [ey, em, ed] = cached.earningsDate.split('-').map(Number);
+      effectiveDate = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().split('T')[0];
+    }
+    if (effectiveDate === taipeiTodayStr) {
+      earningsText += `   📈 ${ticker.toUpperCase()} 財報發布（${hourTag}・日期未確認）\n`;
+    } else if (effectiveDate > taipeiTodayStr && effectiveDate <= sevenDaysLaterStr) {
+      upcomingEarningsText += `   📅 ${effectiveDate} ${ticker.toUpperCase()}（${hourTag}・日期未確認）\n`;
     }
   }
 
@@ -2649,10 +2462,10 @@ async function checkLiveEventActuals() {
     const fromStr = `${taipeiDateStr}T00:00:00+08:00`;
     const toStr   = `${taipeiDateStr}T23:59:59+08:00`;
     
-    const processed = await fetchEconomicEvents(fromStr, toStr);
+    const processed = await fetchEconomicEvents(fromStr, toStr, { force: true }); // 【2026-11-07 Argon #6】快報繞過 1 小時快取，30 秒輪詢才是真的 30 秒
     
     for (const event of processed) {
-      if (event.importance === 3 && event.type === 'macro') {
+      if (event.importance === 3 && event.type === 'macro' && !event.isMock) { // 【2026-11-07 Argon #7】mock 事件永不推播
         const cacheKey = event.id;
         const currentActual = event.actual || "";
         
@@ -2660,7 +2473,11 @@ async function checkLiveEventActuals() {
           const cachedActual = liveActualCache[cacheKey];
           if (cachedActual === undefined || cachedActual === "") {
             liveActualCache[cacheKey] = currentActual;
-            if (!isFirstLiveLoad) {
+            // 【2026-11-07 Argon #7】「未公佈→公佈」的正常轉變一律推播；首輪載入/快取重建時冒出的既存實際值，只補發公佈 20 分鐘內的，禁止把整天舊數據當捷報重推、也禁止靜默吞掉剛公佈的數據
+            const eventTs = new Date(`${event.date}T${event.time || '00:00'}:00+08:00`).getTime();
+            const minsAgo = (Date.now() - eventTs) / 60000;
+            const isTransition = cachedActual === "";
+            if (isTransition || (minsAgo >= -5 && minsAgo <= 20)) {
               await sendLiveDataFlash(event);
             }
           }
@@ -2691,12 +2508,13 @@ async function sendLiveDataFlash(event) {
     const t = (event.title || "").toLowerCase();
     
     if (event.consensus && event.actual) {
-      const actVal = parseFloat(event.actual.replace(/[^0-9.-]/g, ''));
-      const consVal = parseFloat(event.consensus.replace(/[^0-9.-]/g, ''));
+      const actVal = parseScaledValue(event.actual);
+      const consVal = parseScaledValue(event.consensus);
       if (!isNaN(actVal) && !isNaN(consVal)) {
-        const diff = parseFloat((actVal - consVal).toFixed(2));
-        const unitMatch = event.actual.match(/[%KMB]$/);
-        const unit = unitMatch ? unitMatch[0] : "";
+        const unitMatch = String(event.actual).trim().match(/([KMB%])$/i);
+        const unit = unitMatch ? unitMatch[1].toUpperCase() : "";
+        const unitMult = { K: 1e3, M: 1e6, B: 1e9 }[unit] || 1;
+        const diff = parseFloat(((actVal - consVal) / unitMult).toFixed(2));
         const sign = diff > 0 ? "+" : "";
         deviationText = ` (偏差: ${sign}${diff}${unit})`;
         

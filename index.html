@@ -25,7 +25,7 @@
       <div class="header-controls">
         <div class="time-displays">
           <div class="time-item">
-            <span class="time-label">美東時間 (EST):</span>
+            <span class="time-label" id="est-label">美東時間:</span>
             <span id="est-time" class="time-value">--:--:--</span>
           </div>
           <div class="time-item">
@@ -94,6 +94,8 @@
               <!-- Dynamically generated buttons 1 to 12 -->
             </div>
           </div>
+
+          <div id="calendar-error-banner" class="hidden" style="background:#7f1d1d;color:#fecaca;font-weight:600;padding:0.5rem 0.8rem;border-radius:6px;margin:0.4rem 0;">⚠️ 總經事件載入失敗，目前行事曆不完整，請稍後重新整理。</div>
 
           <!-- Main Grid Header (Weekdays) -->
           <div class="calendar-grid-header" id="calendar-weekdays">

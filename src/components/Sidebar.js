@@ -2,11 +2,20 @@
  * Sidebar.js - 處理側邊欄區塊 A (時間軸) 與 區塊 B (即時美股行情) (Global Version - Upgraded Fields)
  */
 
+// 【2026-11-07 Argon #10】數量級感知解析："1.02M" -> 1020000、"980K" -> 980000
+function parseScaledValue(str) {
+  if (str === null || str === undefined) return NaN;
+  const m = String(str).replace(/,/g, '').trim().match(/^(-?\d+(?:\.\d+)?)\s*([KMB])?%?$/i);
+  if (!m) return NaN;
+  const mult = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1;
+  return parseFloat(m[1]) * mult;
+}
+
 function getCompareClass(actual, consensus, compareType) {
   if (!actual || !consensus) return 'val-neutral';
   
-  const actNum = parseFloat(actual.replace(/[^0-9.-]/g, ''));
-  const consNum = parseFloat(consensus.replace(/[^0-9.-]/g, ''));
+  const actNum = parseScaledValue(actual);
+  const consNum = parseScaledValue(consensus);
   
   if (isNaN(actNum) || isNaN(consNum)) return 'val-neutral';
   
@@ -89,20 +98,23 @@ class SidebarComponent {
   }
 
   async fetchTimelineEvents() {
+    // 【2026-11-07 Argon #12】每次抓取時以台北日期重設基準日，跨日不沿用舊日期
+    const nowTw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+    nowTw.setHours(0, 0, 0, 0);
+    this.baseDate = nowTw;
     const fromStr = this.baseDate.toISOString();
     const thirtyDaysLater = new Date(this.baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
     const toStr = thirtyDaysLater.toISOString();
     try {
       const res = await fetch(`/api/economic-calendar?from=${encodeURIComponent(fromStr)}&to=${encodeURIComponent(toStr)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       this.timelineEvents = await res.json();
+      this.timelineError = false;
     } catch (err) {
       console.error("Failed to fetch timeline macro events:", err);
-      // 容錯降級：若 API 連線失敗，改由本地 Mock 生成
-      const currentYear = this.baseDate.getFullYear();
-      const currentMonth = this.baseDate.getMonth() + 1;
-      const m1 = window.generateMacroEvents(currentYear, currentMonth);
-      const m2 = window.generateMacroEvents(currentMonth === 12 ? currentYear + 1 : currentYear, currentMonth === 12 ? 1 : currentMonth + 1);
-      this.timelineEvents = [...m1, ...m2];
+      // 【2026-11-07 Argon #5】API 失敗顯示錯誤狀態，禁止用本地假事件冒充真實行事曆
+      this.timelineEvents = [];
+      this.timelineError = true;
     }
   }
 
@@ -128,14 +140,15 @@ class SidebarComponent {
         title: `${ticker} 財報日`,
         type: "earnings",
         date: dateStr,
-        time: "美股收盤後 / 開盤前",
-        description: `${stockProfile.name} (${ticker}) 預計公佈最新季度財務報告。`
+        time: (state.earningsHour && state.earningsHour[ticker] === 'amc') ? "美股盤後" : (state.earningsHour && state.earningsHour[ticker] === 'bmo') ? "美股盤前" : "時段未確認",
+        description: `${stockProfile.name} (${ticker}) 預計公佈最新季度財務報告。（日期來源：Finnhub 預估，未確認）`
       });
     });
 
-    const thirtyDaysLater = new Date(this.baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const todayStr = this.baseDate.toISOString().split('T')[0];
-    const maxDateStr = thirtyDaysLater.toISOString().split('T')[0];
+    // 【2026-11-07 Argon #12】今日一律以台北日期字串計算，禁止對本地午夜 Date 呼叫 toISOString（會退回昨天）
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+    const [tY, tM, tD] = todayStr.split('-').map(Number);
+    const maxDateStr = new Date(Date.UTC(tY, tM - 1, tD + 30)).toISOString().split('T')[0];
 
     const upcomingEvents = allEvents
       .filter(e => e.date >= todayStr && e.date <= maxDateStr)
@@ -144,7 +157,7 @@ class SidebarComponent {
     if (upcomingEvents.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'timeline-empty';
-      empty.textContent = '未來 30 天內無重大事件';
+      empty.textContent = this.timelineError ? '⚠️ 總經事件載入失敗，請稍後再試' : '未來 30 天內無重大事件';
       this.timelineContainer.appendChild(empty);
       return;
     }
@@ -196,9 +209,8 @@ class SidebarComponent {
       const daysLeft = document.createElement('span');
       daysLeft.className = 'timeline-days-left';
       
-      const eventDate = new Date(event.date + 'T00:00:00');
-      const diffTime = eventDate - this.baseDate;
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const [eY, eM, eD] = event.date.split('-').map(Number);
+      const diffDays = Math.round((Date.UTC(eY, eM - 1, eD) - Date.UTC(tY, tM - 1, tD)) / 86400000);
 
       if (diffDays === 0) {
         daysLeft.textContent = '今日';
@@ -305,7 +317,7 @@ class SidebarComponent {
 
       const priceSpan = document.createElement('span');
       priceSpan.className = 'stock-price';
-      priceSpan.textContent = `$${stock.price.toFixed(2)}`;
+      priceSpan.textContent = (typeof stock.price === 'number') ? `$${stock.price.toFixed(2)}` : '—';
 
       const changeSpan = document.createElement('span');
       const isUp = stock.change > 0;
@@ -315,7 +327,9 @@ class SidebarComponent {
       
       const sign = isUp ? '+' : '';
       const arrow = isUp ? '▲' : isDown ? '▼' : '';
-      changeSpan.textContent = `${arrow} ${sign}${stock.change.toFixed(2)} (${sign}${stock.pct.toFixed(2)}%)`;
+      changeSpan.textContent = (typeof stock.change === 'number' && typeof stock.pct === 'number')
+        ? `${arrow} ${sign}${stock.change.toFixed(2)} (${sign}${stock.pct.toFixed(2)}%)`
+        : '尚無報價';
 
       numbersDiv.appendChild(priceSpan);
       numbersDiv.appendChild(changeSpan);

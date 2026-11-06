@@ -4,7 +4,6 @@
 
 class FinnhubStore {
   constructor() {
-    this.apiKey = "d5ba1epr01qq0hq2kao0d5ba1epr01qq0hq2kaog"; // 預設 API 金鑰 (本機中轉用)
     
     // 從 localStorage 讀取已訂閱的股票列表（多用戶完全隔離，儲存於用戶端瀏覽器中）
     let saved = null;
@@ -27,6 +26,7 @@ class FinnhubStore {
     
     this.stocks = {}; // 存放股票行情資訊 { TSLA: { symbol, name, price, change, pct, status } }
     this.earnings = {}; // 存放財報日期 { TSLA: "YYYY-MM-DD" }
+    this.earningsHour = {}; // 存放財報時段 { TSLA: "bmo" | "amc" | null }
     
     this.subscribers = [];
     this.apiStatus = 'connected'; 
@@ -56,6 +56,7 @@ class FinnhubStore {
       tickers: this.tickers,
       stocks: this.stocks,
       earnings: this.earnings,
+      earningsHour: this.earningsHour,
       apiStatus: this.apiStatus,
       isSimulating: this.isSimulating
     };
@@ -68,13 +69,15 @@ class FinnhubStore {
   loadCachedData() {
     this.tickers.forEach(ticker => {
       const fallback = window.getFallbackProfile(ticker);
+      // 【2026-11-07 Argon #4】初始狀態一律 null + stale，等後端回真實報價；禁止用對照表舊價種快取
       this.stocks[ticker] = {
         symbol: ticker,
         name: fallback.name,
-        price: fallback.price,
-        change: fallback.change,
-        pct: fallback.pct,
-        technicalLevels: window.generateTechnicalLevels(ticker, fallback.price, fallback.price),
+        price: null,
+        change: null,
+        pct: null,
+        technicalLevels: null,
+        stale: true,
         lastUpdated: 0,
         flashType: null
       };
@@ -134,17 +137,18 @@ class FinnhubStore {
             price: newPrice,
             change: cached.change,
             pct: cached.pct,
-            technicalLevels: cached.technicalLevels || window.generateTechnicalLevels(ticker, newPrice, newPrice),
+            // 【2026-11-07 Argon #4/#9】stale 必須完整傳遞（「延遲」徽章才會亮）；關卡只用後端真實計算，無則 null
+            stale: cached.stale === true,
+            technicalLevels: cached.technicalLevels || null,
             lastUpdated: Date.now(),
             flashType: flashType
           };
           this.earnings[ticker] = cached.earningsDate;
+          this.earningsHour[ticker] = cached.earningsHour || null;
 
-          // 緩存財報日期到本地
+          // 緩存財報日期到本地（Argon #8：抓取失敗回 null 時保留既有快取，不刪除）
           if (cached.earningsDate) {
             localStorage.setItem(`earnings_${ticker}`, cached.earningsDate);
-          } else {
-            localStorage.removeItem(`earnings_${ticker}`);
           }
 
           if (flashType) {
@@ -157,9 +161,17 @@ class FinnhubStore {
           }
         }
       });
+      // 【2026-11-07 Argon #4 補強】狀態燈要反映報價新鮮度：後端有回應但全部報價皆 stale 時顯示「報價延遲」，不准顯示「連線成功 (即時數據)」
+      const anyFresh = this.tickers.some(t => {
+        const c = data[t];
+        return c && c.stale === false && typeof c.price === 'number';
+      });
+      this.apiStatus = anyFresh ? 'connected' : 'stale';
       this.notify();
     } catch (err) {
-      // 靜默降級，不拋出錯誤
+      // 【2026-11-07 Argon #4】連線失敗要如實反映在狀態燈，不再永遠顯示 connected
+      this.apiStatus = 'offline';
+      this.notify();
     }
   }
 
@@ -185,10 +197,11 @@ class FinnhubStore {
     this.stocks[symbol] = {
       symbol,
       name: fallback.name,
-      price: fallback.price,
-      change: fallback.change,
-      pct: fallback.pct,
-      technicalLevels: window.generateTechnicalLevels(symbol, fallback.price, fallback.price),
+      price: null,
+      change: null,
+      pct: null,
+      technicalLevels: null,
+      stale: true,
       lastUpdated: 0,
       flashType: null
     };
@@ -208,6 +221,7 @@ class FinnhubStore {
     
     delete this.stocks[symbol];
     delete this.earnings[symbol];
+    delete this.earningsHour[symbol];
     
     localStorage.removeItem(`earnings_${symbol}`);
     this.notify();

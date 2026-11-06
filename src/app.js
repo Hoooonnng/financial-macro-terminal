@@ -74,6 +74,10 @@ class App {
       this.apiStatusEl.classList.add('limit-reached');
       statusText.textContent = "Finnhub API: 限額降級 (延遲顯示中)";
       this.apiStatusEl.title = "已達 Finnhub 免費版每分鐘 60 次呼叫上限，暫用最後已知報價並標示「延遲」，60 秒後自動恢復。";
+    } else if (state.apiStatus === 'stale') {
+      this.apiStatusEl.classList.add('limit-reached');
+      statusText.textContent = "Finnhub API: 報價延遲 (顯示最後已知)";
+      this.apiStatusEl.title = "後端有回應，但目前所有報價皆為最後已知價格（已逐檔標示「延遲」），等待下一次成功更新。";
     } else if (state.apiStatus === 'connected') {
       this.apiStatusEl.classList.add('connected');
       statusText.textContent = "Finnhub API: 連線成功 (即時數據)";
@@ -81,7 +85,7 @@ class App {
     } else {
       this.apiStatusEl.classList.add('offline');
       statusText.textContent = "Finnhub API: 離線狀態";
-      this.apiStatusEl.title = "網路連線中斷，已切換至離線模擬狀態。";
+      this.apiStatusEl.title = "與後端連線中斷，目前顯示最後已知報價（皆會標示延遲）。";
     }
   }
 
@@ -101,6 +105,10 @@ class App {
           second: '2-digit'
         });
         this.estTimeEl.textContent = estStr;
+        // 【2026-11-07 Argon #17】EST/EDT 標籤依紐約當下是否為日光節約時間動態顯示，不寫死 EST
+        const tzName = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(now).find(part => part.type === 'timeZoneName');
+        const labelEl = document.getElementById('est-label');
+        if (labelEl && tzName) labelEl.textContent = `美東時間 (${tzName.value}):`;
       } catch (err) {
         this.estTimeEl.textContent = localStr;
       }

@@ -2,11 +2,20 @@
  * Calendar.js - 月曆與列表檢視元件 (Global Version - Upgraded Fields)
  */
 
+// 【2026-11-07 Argon #10】數量級感知解析："1.02M" -> 1020000、"980K" -> 980000
+function parseScaledValue(str) {
+  if (str === null || str === undefined) return NaN;
+  const m = String(str).replace(/,/g, '').trim().match(/^(-?\d+(?:\.\d+)?)\s*([KMB])?%?$/i);
+  if (!m) return NaN;
+  const mult = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1;
+  return parseFloat(m[1]) * mult;
+}
+
 function getCompareClass(actual, consensus, compareType) {
   if (!actual || !consensus) return 'val-neutral';
   
-  const actNum = parseFloat(actual.replace(/[^0-9.-]/g, ''));
-  const consNum = parseFloat(consensus.replace(/[^0-9.-]/g, ''));
+  const actNum = parseScaledValue(actual);
+  const consNum = parseScaledValue(consensus);
   
   if (isNaN(actNum) || isNaN(consNum)) return 'val-neutral';
   
@@ -29,6 +38,7 @@ class CalendarComponent {
     this.selectedDate = formatDateStr(this.year, this.month, now.getDate());
     this.viewMode = 'grid';
     this.macroEvents = [];
+    this.loadError = false;
 
     this.gridBody = document.getElementById('calendar-grid-body');
     this.listBody = document.getElementById('calendar-list-body');
@@ -38,6 +48,7 @@ class CalendarComponent {
     this.detailsPanel = document.getElementById('date-details-panel');
     this.detailsTitle = document.getElementById('details-date-title');
     this.detailsBody = document.getElementById('details-list-body');
+    this.errorBanner = document.getElementById('calendar-error-banner');
     
     this.prevBtn = document.getElementById('prev-month-btn');
     this.nextBtn = document.getElementById('next-month-btn');
@@ -61,15 +72,14 @@ class CalendarComponent {
   async fetchEventsForMonth() {
     try {
       const res = await fetch(`/api/economic-calendar?year=${this.year}&month=${this.month}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       this.macroEvents = await res.json();
+      this.loadError = false;
     } catch (err) {
       console.error("Failed to fetch macro events:", err);
-      // 容錯降級：若 API 連線失敗，改由本地 Mock 生成
-      if (window.generateMacroEvents) {
-        this.macroEvents = window.generateMacroEvents(this.year, this.month);
-      } else {
-        this.macroEvents = [];
-      }
+      // 【2026-11-07 Argon #5】API 失敗顯示錯誤橫幅，禁止用本地假事件冒充真實行事曆
+      this.macroEvents = [];
+      this.loadError = true;
     }
   }
 
@@ -176,8 +186,8 @@ class CalendarComponent {
           title: `${ticker} 財報日`,
           type: "earnings",
           date: dateStr,
-          time: "美股收盤後 / 開盤前",
-          description: `${stockProfile.name} (${ticker}) 預計公佈最新季度財務報告。`
+          time: (state.earningsHour && state.earningsHour[ticker] === 'amc') ? "美股盤後" : (state.earningsHour && state.earningsHour[ticker] === 'bmo') ? "美股盤前" : "時段未確認",
+          description: `${stockProfile.name} (${ticker}) 預計公佈最新季度財務報告。（日期來源：Finnhub 預估，未確認）`
         });
       }
     });
@@ -192,6 +202,10 @@ class CalendarComponent {
   render() {
     const state = this.store.getState();
     const events = this.getEventsForMonth(state);
+
+    if (this.errorBanner) {
+      this.errorBanner.classList.toggle('hidden', !this.loadError);
+    }
 
     if (this.showAllChk) {
       this.showAllChk.checked = state.showAllEvents;
