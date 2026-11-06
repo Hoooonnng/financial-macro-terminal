@@ -1189,9 +1189,30 @@ async function fetchPrevDayLevels(ticker) {
     if (typeof data.pdh !== 'number' || typeof data.pdl !== 'number') throw new Error('bad candle data');
     prevDayLevelsCache[upper] = { timestamp: Date.now(), data };
     return data;
-  } catch (err) {
-    prevDayLevelsCache[upper] = { timestamp: Date.now(), data: null };
-    return null;
+  } catch (finnhubErr) {
+    // 【2026-11-07 Argon #9 補強】Finnhub 免費方案擋日 K 時，改用 Yahoo chart 公開日 K（真實 OHLC）計算前日高低；兩者都失敗才標缺失
+    try {
+      const yRes = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${upper}?range=10d&interval=1d`, {
+        timeout: 5000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0' }
+      });
+      const result = yRes.data && yRes.data.chart && yRes.data.chart.result && yRes.data.chart.result[0];
+      const tsArr = result && result.timestamp;
+      const quote = result && result.indicators && result.indicators.quote && result.indicators.quote[0];
+      if (!tsArr || !quote || !Array.isArray(quote.high)) throw new Error('no yahoo candle');
+      const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      let idx = tsArr.length - 1;
+      const lastDateET = new Date(tsArr[idx] * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      if (lastDateET === todayET && idx > 0) idx -= 1;
+      const data = { pdh: quote.high[idx], pdl: quote.low[idx] };
+      if (typeof data.pdh !== 'number' || typeof data.pdl !== 'number') throw new Error('bad yahoo candle');
+      const rounded = { pdh: parseFloat(data.pdh.toFixed(2)), pdl: parseFloat(data.pdl.toFixed(2)) };
+      prevDayLevelsCache[upper] = { timestamp: Date.now(), data: rounded };
+      return rounded;
+    } catch (yahooErr) {
+      prevDayLevelsCache[upper] = { timestamp: Date.now(), data: null };
+      return null;
+    }
   }
 }
 
