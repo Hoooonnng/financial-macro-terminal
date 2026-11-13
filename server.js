@@ -1067,12 +1067,27 @@ function getFallbackProfile(ticker) {
 const earningsCache = {};
 const EARNINGS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds
 
-async function getRealEarningsDate(ticker) {
+// 【2026-11-13 Argon P2】財報快取到期輪錯峰：所有 ticker 的財報快取在同一輪寫入、同一輪到期，
+// 到期輪會在一分鐘內連打 N 次 calendar/earnings。改為每輪最多續抓 EARNINGS_REFRESH_PER_ROUND 檔
+// 「已過期但有舊值」的 ticker，其餘沿用舊值到下一輪（批次自然散開）；冷啟動無舊值者不限批但受守門擋。
+const EARNINGS_REFRESH_PER_ROUND = 3;
+
+async function getRealEarningsDate(ticker, round) {
   const upperTicker = ticker.toUpperCase();
   const cached = earningsCache[upperTicker];
-  
+
   if (cached && (Date.now() - cached.timestamp < EARNINGS_CACHE_DURATION)) {
     return cached.data;
+  }
+
+  // 每分鐘守門（輪中也檢查）：水位已達門檻就不打，保留舊值（無舊值則 null，下一輪再補）
+  if (finnhubCallsLastMin() >= FINNHUB_GUARD_THRESHOLD) {
+    return cached ? cached.data : { date: null, hour: null };
+  }
+  // 錯峰：已過期但有舊值者，本輪續抓名額用完就沿用舊值
+  if (cached && round) {
+    if (round.earningsRefreshBudget <= 0) return cached.data;
+    round.earningsRefreshBudget--;
   }
 
   // If rate limit is active, don't call
@@ -1148,6 +1163,7 @@ const finnhubToken = process.env.FINNHUB_API_KEY || "";
 
 // 【2026-10-17】Finnhub 額度水位：滾動 60 秒呼叫計數（免費版上限 60 calls/min）
 // 每次打 finnhub.io 前呼叫 trackFinnhubCall()；/api/health 暴露水位
+const FINNHUB_GUARD_THRESHOLD = 50; // 每分鐘守門門檻（上限 60，留 10 次緩衝）
 const finnhubCallTimes = [];
 function trackFinnhubCall() {
   const now = Date.now();
@@ -1167,13 +1183,21 @@ function finnhubCallsLastMin() {
 // FVG/OB 無真實 K 線計算來源，停用（回傳空陣列）；日 K 抓不到時 technicalLevels=null，前端不顯示關卡。
 const prevDayLevelsCache = {};
 const PREV_LEVELS_CACHE_DURATION = 30 * 60 * 1000; // 30 分鐘
-async function fetchPrevDayLevels(ticker) {
+// 【2026-11-13 Argon P2】日 K 快取（30 分）與財報快取（15 分）同輪到期，會疊成尖峰；
+// Finnhub 日 K 每輪最多打 PREV_LEVELS_FINNHUB_PER_ROUND 次，超額或水位達門檻直接走 Yahoo 真實日 K 備援，額度優先留給報價與財報
+const PREV_LEVELS_FINNHUB_PER_ROUND = 3;
+async function fetchPrevDayLevels(ticker, round) {
   const upper = ticker.toUpperCase();
   const cachedLv = prevDayLevelsCache[upper];
   if (cachedLv && (Date.now() - cachedLv.timestamp < PREV_LEVELS_CACHE_DURATION)) {
     return cachedLv.data;
   }
   try {
+    if (finnhubCallsLastMin() >= FINNHUB_GUARD_THRESHOLD) throw new Error('finnhub guard');
+    if (round) {
+      if (round.candleBudget <= 0) throw new Error('finnhub candle budget');
+      round.candleBudget--;
+    }
     const toTs = Math.floor(Date.now() / 1000);
     const fromTs = toTs - 12 * 24 * 60 * 60;
     const url = `https://finnhub.io/api/v1/stock/candle?symbol=${upper}&resolution=D&from=${fromTs}&to=${toTs}&token=${finnhubToken}`;
@@ -1263,17 +1287,24 @@ function markStale(ticker) {
 async function pollWatchlistData() {
   const tickersArray = Array.from(activeTickers);
   // 【2026-10-17】額度守門：本輪開始前若 60 秒內已用 ≥50 次，整輪跳過等下一輪，避免 429
-  if (finnhubCallsLastMin() >= 50) {
+  if (finnhubCallsLastMin() >= FINNHUB_GUARD_THRESHOLD) {
     console.warn(`⚠️ [Finnhub] 額度水位過高（${finnhubCallsLastMin()}/60），本輪跳過。`);
     return;
   }
+  // 【2026-11-13 Argon P2】本輪財報續抓／日 K 名額（錯峰）
+  const round = { earningsRefreshBudget: EARNINGS_REFRESH_PER_ROUND, candleBudget: PREV_LEVELS_FINNHUB_PER_ROUND };
 
   for (const ticker of tickersArray) {
     if (isSimulating) {
       markStale(ticker);
       continue;
     }
-    
+    // 【2026-11-13 Argon P2】輪中守門：水位達門檻即停打，該檔標過期、下一輪再補（不偽造）
+    if (finnhubCallsLastMin() >= FINNHUB_GUARD_THRESHOLD) {
+      markStale(ticker);
+      continue;
+    }
+
     try {
       const url = `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${finnhubToken}`;
       trackFinnhubCall(); // 【2026-10-17】計入額度水位
@@ -1281,7 +1312,7 @@ async function pollWatchlistData() {
       const data = response.data;
       
       // 取得真實財報日期 (15分鐘快取保護)
-      const earningsResult = await getRealEarningsDate(ticker);
+      const earningsResult = await getRealEarningsDate(ticker, round);
       const earningsDate = earningsResult ? earningsResult.date : null;
       const earningsHour = earningsResult ? earningsResult.hour : null;
       
@@ -1300,7 +1331,7 @@ async function pollWatchlistData() {
         cached.name = baseProfile.name;
         
         // 【2026-11-07 Argon #9】技術關卡改用真實日 K 前日高低；抓不到標缺失（null），不再雜湊捏造
-        const prevLevels = await fetchPrevDayLevels(ticker);
+        const prevLevels = await fetchPrevDayLevels(ticker, round);
         const actualOpen = (typeof data.o === 'number' && data.o > 0) ? data.o : data.c;
         cached.technicalLevels = prevLevels
           ? { pdh: prevLevels.pdh, pdl: prevLevels.pdl, open: actualOpen, fvgs: [], obs: [] }
@@ -2210,6 +2241,103 @@ let isReportingActive = false;
 // 今日成功鎖：同一天已成功發送則全面封鎖後續重試
 let cronLastSuccessDate = '';
 
+// ==========================================
+// 【2026-11-13 Argon P2】晨報狀態持久化（GitHub Gist）
+// Render 免費方案檔案系統為暫時性，重啟後記憶體狀態歸零 → 同日重觸發可能重複發晨報。
+// 狀態存於 secret gist 的 STATE_FILE：{ lastSuccessDate, claim: { date, instance, at } | null }
+// 未設定 GIST_ID / GIST_TOKEN 時全部 no-op，退回原記憶體行為。
+// Gist 讀寫失敗一律 fail-open（照常發送、靠記憶體鎖），寧可罕見重複也不漏發晨報。
+// ==========================================
+const GIST_ID = process.env.GIST_ID || '';
+const GIST_TOKEN = process.env.GIST_TOKEN || '';
+const STATE_FILE = 'macro-terminal-state.json';
+const STATE_ENABLED = !!(GIST_ID && GIST_TOKEN);
+const INSTANCE_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+// 佔位有效期：涵蓋 1 次發送 + MAX_RETRIES × 5 分鐘重試（≈15 分）再加緩衝；超過視為前一個容器已死、可接手
+const CLAIM_TTL_MS = 25 * 60 * 1000;
+
+function gistHeaders() {
+  return {
+    Authorization: `Bearer ${GIST_TOKEN}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'financial-macro-terminal',
+    'X-GitHub-Api-Version': '2022-11-28'
+  };
+}
+
+async function readPersistedState() {
+  if (!STATE_ENABLED) return null;
+  try {
+    const res = await axios.get(`https://api.github.com/gists/${GIST_ID}`, { headers: gistHeaders(), timeout: 8000 });
+    const file = res.data && res.data.files && res.data.files[STATE_FILE];
+    if (!file || !file.content) return { lastSuccessDate: '', claim: null };
+    const parsed = JSON.parse(file.content);
+    return { lastSuccessDate: parsed.lastSuccessDate || '', claim: parsed.claim || null };
+  } catch (err) {
+    console.error(`❌ [狀態持久化] 讀取 Gist 失敗（退回記憶體鎖）: ${err.message}`);
+    return null;
+  }
+}
+
+async function writePersistedState(state) {
+  if (!STATE_ENABLED) return false;
+  try {
+    await axios.patch(`https://api.github.com/gists/${GIST_ID}`,
+      { files: { [STATE_FILE]: { content: JSON.stringify(state, null, 2) } } },
+      { headers: gistHeaders(), timeout: 8000 });
+    return true;
+  } catch (err) {
+    console.error(`❌ [狀態持久化] 寫入 Gist 失敗: ${err.message}`);
+    return false;
+  }
+}
+
+// 啟動先讀 lastSuccessDate（端點會 await 這個 promise 再判斷）
+const persistedStateReady = (async () => {
+  if (!STATE_ENABLED) {
+    console.log('ℹ️ [狀態持久化] 未設定 GIST_ID / GIST_TOKEN，晨報成功鎖僅存記憶體。');
+    return;
+  }
+  const st = await readPersistedState();
+  if (st && st.lastSuccessDate && st.lastSuccessDate > cronLastSuccessDate) {
+    cronLastSuccessDate = st.lastSuccessDate;
+  }
+  console.log(`🗄️ [狀態持久化] 啟動載入 lastSuccessDate=${cronLastSuccessDate || '(無)'}，instance=${INSTANCE_ID}`);
+})();
+
+// 發送前檢查＋佔位。回傳 true = 可發送；false = 今日已發或他容器佔位中
+async function checkAndClaimMorningReport(todayStr) {
+  await persistedStateReady;
+  if (!STATE_ENABLED) return true;
+  const st = await readPersistedState();
+  if (!st) return true; // 讀取失敗 fail-open
+  if (st.lastSuccessDate === todayStr) {
+    cronLastSuccessDate = todayStr;
+    console.log(`🔒 [狀態持久化] Gist 顯示今日晨報已發（${todayStr}），跳過。`);
+    return false;
+  }
+  const c = st.claim;
+  if (c && c.date === todayStr && c.instance !== INSTANCE_ID && Date.now() - c.at < CLAIM_TTL_MS) {
+    console.warn(`🔐 [狀態持久化] 今日晨報已由其他容器（${c.instance}）佔位中，跳過。`);
+    return false;
+  }
+  const ok = await writePersistedState({ lastSuccessDate: st.lastSuccessDate, claim: { date: todayStr, instance: INSTANCE_ID, at: Date.now() } });
+  if (!ok) return true; // 寫入失敗 fail-open
+  // Gist 無 CAS：寫完再讀一次確認佔位者是自己（防新舊容器並存時同時佔位）
+  const verify = await readPersistedState();
+  if (verify && verify.claim && verify.claim.instance !== INSTANCE_ID && verify.claim.date === todayStr) {
+    console.warn(`🔐 [狀態持久化] 佔位被其他容器（${verify.claim.instance}）搶先，跳過。`);
+    return false;
+  }
+  return true;
+}
+
+// 成功後寫回；放棄時釋放佔位（保留 lastSuccessDate），讓手動重觸發可接手
+async function persistMorningReportResult(todayStr, success) {
+  if (!STATE_ENABLED) return;
+  await writePersistedState({ lastSuccessDate: success ? todayStr : (cronLastSuccessDate || ''), claim: null });
+}
+
 // 自癒重試參數
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5 * 60 * 1000; // 5 分鐘
@@ -2380,6 +2508,12 @@ app.get('/api/cron/morning-report', (req, res) => {
       return;
     }
 
+    // 【2026-11-13 Argon P2】跨重啟防重：先讀 Gist 檢查今日是否已發，並佔位
+    if (!(await checkAndClaimMorningReport(todayStr))) {
+      isReportingActive = false;
+      return;
+    }
+
     // 定義本次推播任務的遞迴重試執行器
     async function attemptReport(retryCount) {
       const targetId = process.env.LINE_USER_ID || process.env.LINE_GROUP_ID;
@@ -2408,6 +2542,7 @@ app.get('/api/cron/morning-report', (req, res) => {
         // 成功：鎖定今日、釋放 Mutex
         cronLastSuccessDate = todayStr;
         isReportingActive = false;
+        await persistMorningReportResult(todayStr, true); // 【2026-11-13 Argon P2】成功後寫回 Gist
         if (retryCount > 0) {
           console.log(`✅ [自癒成功] 晨報已於第 ${retryCount} 次重試中順利補發完畢。`);
           if (targetId) {
@@ -2455,6 +2590,7 @@ app.get('/api/cron/morning-report', (req, res) => {
         } else {
           // 達到重試上限，釋放鎖讓明天可以重新觸發
           isReportingActive = false;
+          await persistMorningReportResult(todayStr, false); // 【2026-11-13 Argon P2】釋放佔位
           console.error(`🚨 [自癒放棄] 已達最大重試上限（${MAX_RETRIES} 次），今日晨報補發終止。`);
         }
       }
@@ -2595,7 +2731,9 @@ app.get('/api/health', (req, res) => {
     finnhubCallsLastMin: finnhubCallsLastMin(), // 【2026-10-17】額度水位（免費上限 60/min）
     finnhubLimitPerMin: 60,
     line: !!lineClient,
-    watchlist: activeTickers.size
+    watchlist: activeTickers.size,
+    stateBackend: STATE_ENABLED ? 'gist' : 'memory', // 【2026-11-13 Argon P2】晨報成功鎖持久化後端
+    cronLastSuccessDate: cronLastSuccessDate || null
   });
 });
 
